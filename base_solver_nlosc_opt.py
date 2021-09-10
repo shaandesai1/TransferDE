@@ -20,12 +20,12 @@ parser.add_argument('--wout', type=str, default='learned')
 parser.add_argument('--paramg', type=str, default='exp')
 
 parser.add_argument('--niters', type=int, default=10000)
-parser.add_argument('--niters_wout', type=int, default=15000)
+parser.add_argument('--niters_wout', type=int, default=10000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--test_freq', type=int, default=50)
 
 parser.add_argument('--viz', action='store_true')
-parser.add_argument('--evaluate_only', action='store_true')
+parser.add_argument('--evaluate_only', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--adjoint', action='store_false')
 args = parser.parse_args()
@@ -308,7 +308,7 @@ if __name__ == '__main__':
 
             loss.backward()
             optimizer.step()
-
+            print(loss.item())
             if itr % args.test_freq == 0:
                 print(f'c1:{c1.mean().item()},c2:{c2.mean().item()},c3:{c3.mean().item()}')
                 # print(loss.item())
@@ -351,8 +351,8 @@ if __name__ == '__main__':
 
     for ic in ics:
         wout_gen = Transformer_Learned(NDIMZ,1, 2)
-        wout_gen.load_state_dict(torch.load('wout_dict_wout1'))
-        optimizer = optim.Adam(wout_gen.parameters(), lr=1e-3)
+        # wout_gen.load_state_dict(torch.load('wout_dict_wout1'))
+        optimizer = optim.SGD(wout_gen.parameters(), lr=1e-3)
 
         for itr in range(1, args.niters_wout + 1):
             optimizer.zero_grad()
@@ -362,12 +362,13 @@ if __name__ == '__main__':
             pred_p = ic[1].reshape(1, 1) + torch.mm(s, wout[1])
             pred_pd = torch.mm(sd, wout[1])
 
-            c3 = (get_ham(pred_q,pred_p).reshape(-1,1) - get_ham(ic[0],ic[1]).reshape(1,1))**2
+            c3 = torch.square(get_ham(pred_q,pred_p).reshape(-1,1) - get_ham(ic[0],ic[1]).reshape(1,1))
 
             lst = (pred_qd - pred_p) ** 2 + (pred_pd + pred_q + SCALER*pred_q ** 3) ** 2  +c3# + energy term
             loss = torch.mean(lst)
             loss.backward()
             optimizer.step()
+            print(loss.item())
 
         with torch.no_grad():
             y0 = ic.reshape(1,2)
