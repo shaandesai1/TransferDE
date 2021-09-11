@@ -14,13 +14,13 @@ parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=1000)
+parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_ics', type=int, default=1)
 parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_true')
+parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
 from torchdiffeq import odeint_adjoint as odeint
@@ -107,7 +107,7 @@ class ODEFunc(nn.Module):
         self.nl = SiLU()
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
-        self.lin3 = nn.Linear(self.hdim, self.hdim)
+        # self.lin3 = nn.Linear(self.hdim, self.hdim)
 
         self.lout = nn.Linear(self.hdim, output_dim, bias=False)
 
@@ -116,8 +116,8 @@ class ODEFunc(nn.Module):
         x = self.nl(x)
         x = self.lin2(x)
         x = self.nl(x)
-        x = self.lin3(x)
-        x = self.nl(x)
+        # x = self.lin3(x)
+        # x = self.nl(x)
         x = self.lout(x)
         return x
 
@@ -139,8 +139,8 @@ class ODEFunc(nn.Module):
         x = self.nl(x)
         x = self.lin2(x)
         x = self.nl(x)
-        x = self.lin3(x)
-        x = self.nl(x)
+        # x = self.lin3(x)
+        # x = self.nl(x)
 
         return x
 
@@ -293,31 +293,31 @@ if __name__ == '__main__':
             pred_y, pred_ydot,pred_yddot = compute_s_sdot(func, tv)
 
             #enforce diffeq
-            loss_diffeq = (pred_yddot + a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
+            loss_diffeq = pred_yddot + (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
 
             #enforce initial conditions
             loss_ics = torch.square(pred_y[0, :].ravel() - true_y0[:,0].ravel()) + torch.square(pred_ydot[0,:].ravel()-true_y0[:,1].ravel())
             # print(loss_ics.item())
-            loss = torch.mean(torch.square(loss_diffeq)) + 10*torch.mean(loss_ics)
+            loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(loss_ics)
             loss.backward()
             optimizer.step()
             loss_collector.append(torch.square(loss_diffeq).mean().item())
             if itr % args.test_freq == 0:
-                # func.eval()
+                func.eval()
                 print(loss_collector[-1])
-                # s, _,_ = compute_s_sdot(func, t)
-                # pred_y = s.detach()
-                # pred_y = pred_y.reshape(-1, args.num_ics, 1)
-                # visualize(true_y.detach(), pred_y.detach(), loss_collector)
-                # ii += 1
+                s, _,_ = compute_s_sdot(func, t)
+                pred_y = s.detach()
+                pred_y = pred_y.reshape(-1, args.num_ics, 1)
+                visualize(true_y.detach(), pred_y.detach(), loss_collector)
+                ii += 1
 
         torch.save(func.state_dict(), 'func_ffnn_second_order')
 
     # with torch.no_grad():
 
-    a0 = lambda t: 0*t ** 2
-    a1 = lambda t: 1. + 0. * t
-    f = lambda t: torch.sin(t)
+    a0 = lambda t: t ** 2
+    a1 = lambda t: 0. + 0. * t
+    f = lambda t: 0 * torch.sin(t)
 
     diffeq_init = diffeq(a0, a1, f)
     gt_generator = base_diffeq(diffeq_init)
@@ -326,32 +326,37 @@ if __name__ == '__main__':
     t.requires_grad = True
     wout_gen = Transformer_Analytic(a0, a1, f, 0.0)
 
-    func.load_state_dict(torch.load('func_ffnn'))
+    func.load_state_dict(torch.load('func_ffnn_second_order'))
     func.eval()
 
-    h, hd = compute_h_hdot(func, t)
+    r1 = -5.
+    r2 = 5.
+
+    h, hd,hdd = compute_h_hdot(func, t)
     h = h.detach()
     hd = hd.detach()
-    ics = torch.linspace(r1, r2, args.num_test_ics).reshape(1, -1)
-    # print(ics)
+    hdd = hdd.detach()
+
+    ics = (r2 - r1) * torch.rand(args.num_test_ics, 2) + r1
+
     loss_collector = []
 
-    y0 = ics.reshape(1, -1)
+    # y0 = ics.reshape(1, -1)
     s1 = time.time()
-    wout = wout_gen.get_wout(h, hd, y0, t.detach())
+    wout = wout_gen.get_wout(h, hd,hdd, ics.t(), t.detach())
     pred_y = h @ wout
     s2 = time.time()
     print(f'all_ics:{s2 - s1}')
 
     s1 = time.time()
-    true_y = gt_generator.get_solution(ics.reshape(-1, 1), t.ravel())
-    true_ys = true_y.reshape(len(pred_y), ics.shape[1])
+    true_y = gt_generator.get_solution(ics, t.ravel())
+    true_ys = true_y[:,:,0].reshape(len(pred_y), ics.shape[0])
     s2 = time.time()
     print(f'gt_ics:{s2 - s1}')
 
     s1 = time.time()
-    true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
-    estim_ys = true_y.reshape(len(pred_y), ics.shape[1])
+    true_y = estim_generator.get_solution(ics, t.ravel())
+    estim_ys = true_y[:,:,0].reshape(len(pred_y), ics.shape[0])
     s2 = time.time()
     print(f'estim_ics:{s2 - s1}')
 
