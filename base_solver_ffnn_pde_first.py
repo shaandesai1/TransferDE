@@ -339,8 +339,8 @@ if __name__ == '__main__':
     # with torch.no_grad():
 
     f = lambda t: 3*torch.sin(t)
-    lbc = lambda t: 1+0*t
-    rbc = lambda t: 1+0*t
+    lbc = lambda t: 0*t
+    rbc = lambda t: 0*t
     lambda_val = 5
 
     wout_gen = Transformer_Analytic(f,lambda_val,lbc,rbc)

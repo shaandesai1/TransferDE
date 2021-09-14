@@ -248,8 +248,8 @@ if __name__ == '__main__':
     # define coefficients as lambda functions, used for gt and wout_analytic
     # training differential equation
     a0 = lambda t: t ** 2
-    a1 = lambda t: 0. + 0. * t
-    f = lambda t: 0*torch.sin(t)
+    a1 = lambda t: 1. + 0. * t
+    f = lambda t: 1*torch.sin(t)
 
     diffeq_init = diffeq(a0, a1, f)
     gt_generator = base_diffeq(diffeq_init)
@@ -316,8 +316,8 @@ if __name__ == '__main__':
     # with torch.no_grad():
 
     a0 = lambda t: t ** 2
-    a1 = lambda t: 0. + 0. * t
-    f = lambda t: 0 * torch.sin(t)
+    a1 = lambda t:  t**2
+    f = lambda t: 1.*torch.cos(t)
 
     diffeq_init = diffeq(a0, a1, f)
     gt_generator = base_diffeq(diffeq_init)
@@ -363,11 +363,14 @@ if __name__ == '__main__':
     print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
     print(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
 
-    plt.figure()
+    fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     # print(true_ys[0,:])
-    for i in range(0,args.num_test_ics,50):
-        plt.plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i],c='blue',linestyle='dashed')
-        plt.plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], c='orange')
+    for i in range(0, args.num_test_ics, 50):
+        ax[0].plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i], c='blue', linestyle='dashed')
+        ax[0].plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], c='orange')
         # plt.draw()
+
+    ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
+    ax[1].set_xlabel('Time (s)')
     plt.legend()
     plt.show()
