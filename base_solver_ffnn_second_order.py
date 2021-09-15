@@ -7,11 +7,15 @@ import argparse
 import torch.optim as optim
 import numpy as np
 import time
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
+from torchdiffeq import odeint_adjoint as odeint
+from mpl_toolkits.mplot3d import Axes3D
 
 parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=3.)
-parser.add_argument('--dt', type=int, default=0.1)
+parser.add_argument('--dt', type=int, default=0.01)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
@@ -23,7 +27,8 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
-from torchdiffeq import odeint_adjoint as odeint
+
+scaler = MinMaxScaler()
 
 
 class diffeq(nn.Module):
@@ -96,6 +101,30 @@ class SiLU(nn.Module):
         '''
         return torch.sin(input)
 
+def diff(u, t, order=1):
+    # code adapted from neurodiffeq library
+    # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
+    r"""The derivative of a variable with respect to another.
+    """
+
+    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])],1)
+    if der is None:
+        print('derivative is None')
+        return torch.zeros_like(t, requires_grad=True)
+    else:
+        der.requires_grad_()
+    for i in range(1, order):
+
+        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
+        # print()
+        if der is None:
+            print('derivative is None')
+            return torch.zeros_like(t, requires_grad=True)
+        else:
+            der.requires_grad_()
+    return der
+
+
 class ODEFunc(nn.Module):
     """
     function to learn the outputs u(t) and hidden states h(t) s.t. u(t) = h(t)W_out
@@ -112,24 +141,10 @@ class ODEFunc(nn.Module):
         self.lout = nn.Linear(self.hdim, output_dim, bias=False)
 
     def forward(self, t):
-        x = self.lin1(t)
-        x = self.nl(x)
-        x = self.lin2(x)
-        x = self.nl(x)
-        # x = self.lin3(x)
-        # x = self.nl(x)
+        x = self.h(t)
         x = self.lout(x)
         return x
 
-    def dot(self, t):
-        outputs = self.forward(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
-
-    def ddot(self, t):
-        outputs = self.dot(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
 
     def wouts(self, x):
         return self.lout(x)
@@ -139,20 +154,7 @@ class ODEFunc(nn.Module):
         x = self.nl(x)
         x = self.lin2(x)
         x = self.nl(x)
-        # x = self.lin3(x)
-        # x = self.nl(x)
-
         return x
-
-    def hdot(self, t):
-        outputs = self.h(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
-
-    def hddot(self, t):
-        outputs = self.hdot(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
 
 
 class Transformer_Learned(nn.Module):
@@ -196,21 +198,6 @@ class Transformer_Analytic(nn.Module):
         W0 = torch.linalg.solve(DH.t() @ DH + lambda_0 + h0m @ h0m.t() + h0d @ h0d.t(), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1))+ h0d @ (y0[1, :].reshape(1, -1)))
         return W0
 
-
-def compute_h_hdot(func, batch_t):
-    h = func.h(batch_t)
-    hdot = func.hdot(batch_t)
-    hddot = func.hddot(batch_t)
-
-    return h,hdot,hddot
-
-
-def compute_s_sdot(func, batch_t):
-    s = func(batch_t)
-    sd = func.dot(batch_t)
-    sdd = func.ddot(batch_t)
-
-    return s,sd,sdd
 
 if args.viz:
     import matplotlib.pyplot as plt
@@ -290,7 +277,9 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             # compute hwout,hdotwout
-            pred_y, pred_ydot,pred_yddot = compute_s_sdot(func, tv)
+            pred_y = func(tv)
+            pred_ydot = diff(pred_y,tv)
+            pred_yddot = diff(pred_ydot,tv)
 
             #enforce diffeq
             loss_diffeq = pred_yddot + (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
@@ -305,8 +294,7 @@ if __name__ == '__main__':
             if itr % args.test_freq == 0:
                 func.eval()
                 print(loss_collector[-1])
-                s, _,_ = compute_s_sdot(func, t)
-                pred_y = s.detach()
+                pred_y = func(t).detach()
                 pred_y = pred_y.reshape(-1, args.num_ics, 1)
                 visualize(true_y.detach(), pred_y.detach(), loss_collector)
                 ii += 1
@@ -332,10 +320,30 @@ if __name__ == '__main__':
     r1 = -5.
     r2 = 5.
 
-    h, hd,hdd = compute_h_hdot(func, t)
+    h = func.h(t)
+    hd = diff(h,t)
+    hdd = diff(hd,t)
+
     h = h.detach()
     hd = hd.detach()
     hdd = hdd.detach()
+
+    gz_np = h.detach().numpy()
+    T = np.linspace(0, 1, len(gz_np)) ** 2
+    new_hiddens = scaler.fit_transform(gz_np)
+    pca = PCA(n_components=3)
+    pca_comps = pca.fit_transform(new_hiddens)
+
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+
+    if pca_comps.shape[1] >= 2:
+        s = 10  # Segment length
+        for i in range(0, len(gz_np) - s, s):
+            ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
+                      color=(0.01, 0.5, T[i]))
+            plt.xlabel('comp1')
+            plt.ylabel('comp2')
 
     ics = (r2 - r1) * torch.rand(args.num_test_ics, 2) + r1
 

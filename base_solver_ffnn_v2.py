@@ -7,15 +7,19 @@ import argparse
 import torch.optim as optim
 import numpy as np
 import time
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler
+from torchdiffeq import odeint_adjoint as odeint
+from mpl_toolkits.mplot3d import Axes3D
 
 parser = argparse.ArgumentParser('transfer demo')
 
-parser.add_argument('--tmax', type=float, default=5.)
+parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
-parser.add_argument('--num_ics', type=int, default=10)
+parser.add_argument('--num_ics', type=int, default=1)
 parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
@@ -23,7 +27,9 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
-from torchdiffeq import odeint_adjoint as odeint
+
+scaler = MinMaxScaler()
+
 
 
 class diffeq(nn.Module):
@@ -96,17 +102,9 @@ class ODEFunc(nn.Module):
         self.lout = nn.Linear(self.hdim, output_dim, bias=False)
 
     def forward(self, t):
-        x = self.lin1(t)
-        x = self.nl(x)
-        x = self.lin2(x)
-        x = self.nl(x)
+        x = self.h(t)
         x = self.lout(x)
         return x
-
-    def dot(self, t):
-        outputs = self.forward(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
 
     def wouts(self, x):
         return self.lout(x)
@@ -118,11 +116,30 @@ class ODEFunc(nn.Module):
         x = self.nl(x)
         return x
 
-    def hdot(self, t):
-        outputs = self.h(t)
-        doutdt = [torch.autograd.grad(outputs[:, i].sum(), t, create_graph=True)[0] for i in range(outputs.shape[1])]
-        return torch.cat(doutdt, 1)
+def diff(u, t, order=1):
+    # code adapted from neurodiffeq library
+    # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
+    r"""The derivative of a variable with respect to another.
+    """
+    # ones = torch.ones_like(u)
 
+
+    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])],1)
+    if der is None:
+        print('derivative is None')
+        return torch.zeros_like(t, requires_grad=True)
+    else:
+        der.requires_grad_()
+    for i in range(1, order):
+
+        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
+        # print()
+        if der is None:
+            print('derivative is None')
+            return torch.zeros_like(t, requires_grad=True)
+        else:
+            der.requires_grad_()
+    return der
 
 class Transformer_Learned(nn.Module):
     """
@@ -165,40 +182,6 @@ class Transformer_Analytic(nn.Module):
         return W0
 
 
-class Parametrization:
-
-    def __init__(self, type='exp'):
-        if type == 'exp':
-            self.g = lambda t: (1. - torch.exp(-t))
-            self.gd = lambda t: torch.exp(-t)
-        elif type == 'lin':
-            self.g = lambda t: t
-            self.gd = lambda t: 1. + t * 0
-
-    def get_g(self, t):
-        return self.g(t)
-
-    def get_gdot(self, t):
-        return self.gd(t)
-
-    def get_g_gdot(self, t):
-        return self.g(t), self.gd(t)
-
-
-def compute_h_hdot(func, batch_t):
-    integ = func.h(batch_t)
-    integdot = func.hdot(batch_t)
-
-    return integ, integdot
-
-
-def compute_s_sdot(func, batch_t):
-    integ = func(batch_t)
-    integdot = func.dot(batch_t)
-
-    return integ, integdot
-
-
 if args.viz:
     import matplotlib.pyplot as plt
 
@@ -234,9 +217,9 @@ if __name__ == '__main__':
     NDIMZ = args.hidden_size
     # define coefficients as lambda functions, used for gt and wout_analytic
     # training differential equation
-    a0 = lambda t: t ** 2
-    a1 = lambda t: 1. + 0. * t
-    f = lambda t: torch.sin(t)
+    a0 = lambda t: t
+    a1 = lambda t: 1+0*t
+    f = lambda t: torch.cos(t)
 
     diffeq_init = diffeq(a0, a1, f)
     gt_generator = base_diffeq(diffeq_init)
@@ -276,10 +259,8 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             # compute hwout,hdotwout
-            s, sd = compute_s_sdot(func, tv)
-            pred_y = s
-            pred_ydot = sd
-
+            pred_y = func(tv)
+            pred_ydot = diff(pred_y,tv)
             #enforce diffeq
             loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
                 tv.detach()).reshape(-1, 1)
@@ -293,9 +274,7 @@ if __name__ == '__main__':
             loss_collector.append(torch.square(loss_diffeq).mean().item())
             if itr % args.test_freq == 0:
                 func.eval()
-                # print(loss_collector[-1])
-                s, sd = compute_s_sdot(func, t)
-                pred_y = s.detach()
+                pred_y = func(t).detach()
                 pred_y = pred_y.reshape(-1, args.num_ics, 1)
                 visualize(true_y.detach(), pred_y.detach(), loss_collector)
                 ii += 1
@@ -318,9 +297,26 @@ if __name__ == '__main__':
     func.load_state_dict(torch.load('func_ffnn'))
     func.eval()
 
-    h, hd = compute_h_hdot(func, t)
+    h = func.h(t)
+    hd = diff(h,t)
     h = h.detach()
     hd = hd.detach()
+
+    gz_np = h.detach().numpy()
+    T = np.linspace(0, 1, len(gz_np)) ** 2
+    new_hiddens = scaler.fit_transform(gz_np)
+    pca = PCA(n_components=3)
+    pca_comps = pca.fit_transform(new_hiddens)
+
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+
+    if pca_comps.shape[1] >= 2:
+        s = 10  # Segment length
+        for i in range(0, len(gz_np) - s, s):
+            ax.plot3D(pca_comps[i:i+s+1, 0], pca_comps[i:i+s+1, 1],pca_comps[i:i+s+1,2],color=(0.1,0.8,T[i]))
+            plt.xlabel('comp1')
+            plt.ylabel('comp2')
 
     r1 = -5.
     r2 = 5.
