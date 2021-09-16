@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
-parser.add_argument('--niters', type=int, default=5000)
+parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=50)
 parser.add_argument('--num_ics', type=int, default=1)
@@ -22,7 +22,7 @@ parser.add_argument('--bs', type=int, default=100)
 
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--evaluate_only', action='store_true')
 
 args = parser.parse_args()
 from torchdiffeq import odeint_adjoint as odeint
@@ -127,12 +127,13 @@ class Transformer_Analytic(nn.Module):
     returns Wout analytic, need to define the parameter coefficients
     """
 
-    def __init__(self,bb,tb,lbc,rbc,rho):
+    def __init__(self,bb,tb,lbc,rbc,c,rho):
         super(Transformer_Analytic, self).__init__()
         self.bb = bb
         self.tb = tb
         self.lbc = lbc
         self.rbc = rbc
+        self.c = c
         self.rho = rho
         # self.lambda_ = lambda_
 
@@ -147,9 +148,12 @@ class Transformer_Analytic(nn.Module):
         d2Hdx2 = diff(H,x,2)
         # s2 = time.time()
         # print(s2-s1)
-        rho = self.rho(t,x)
+        # rho = self.rho(t,x)
 
-        DH = (d2Hdt2+d2Hdx2)
+
+        rhos = self.rho(t,x)
+
+        DH = (d2Hdt2-self.c*d2Hdx2)
 
         H0 = func.hidden_states(grid_t[:,0].reshape(-1,1),grid_x[:,0].reshape(-1,1))
         HT = func.hidden_states(grid_t[:, -1].reshape(-1, 1), grid_x[:, -1].reshape(-1, 1))
@@ -162,8 +166,8 @@ class Transformer_Analytic(nn.Module):
         BL = self.lbc(grid_t[0,:]).reshape(-1,1)
         BR = self.rbc(grid_t[-1,:]).reshape(-1,1)
 
-        W0 = torch.linalg.solve(DH.t() @ DH  + H0.t()@H0 +HT.t()@HT + HL.t()@HL+HR.t()@HR, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
-        return W0
+        W0 = torch.linalg.solve(DH.t() @ DH  + H0.t()@H0 +HT.t()@HT + HL.t()@HL+HR.t()@HR,DH.t()@rhos+ H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        return W0,d2Hdt2,d2Hdx2
 
 
 
@@ -181,23 +185,42 @@ def visualize(u,t,x,grid_t,grid_x,lst):
     if args.viz:
         ax_traj.cla()
         ax_phase.cla()
-        ax_traj.contourf(x,t,u.reshape(len(x),len(t)).t())
-        u_true = torch.sin(grid_x)*torch.exp(-grid_t)
-        ax_phase.contourf(x,t,u_true.reshape(len(x),len(t)).t())
-        ax_vecfield.contourf(x, t, (u_true.reshape(len(x), len(t)).t()-u.reshape(len(x),len(t)).t())**2)
+        ax_traj.contourf(x,t,u[:,0].reshape(len(x),len(t)).t())
+        # u_true = torch.sin(grid_x)*torch.exp(-grid_t)
+        # ax_phase.contourf(x,t,u[:,1].reshape(len(x),len(t)).t())
+        # ax_vecfield.contourf(x, t, u[:, 2].reshape(len(x), len(t)).t())
+
+        # ax_vecfield.contourf(x, t, (u_true.reshape(len(x), len(t)).t()-u.reshape(len(x),len(t)).t())**2)
         ax_traj.legend()
         plt.draw()
         plt.pause(0.001)
+
+def get_rho(t,x,A,tmid,xmid,sigma_X,sigma_Y,theta):
+    X=x
+    Y=t
+    # A = 1;
+    x0 = xmid;
+    y0 = tmid;
+    theta = torch.tensor(theta)
+
+    # X, Y = np.meshgrid(np.arange(-5,5,.1), np.arange(-5,5,.1))
+    a = torch.cos(theta) ** 2 / (2 * sigma_X ** 2) + torch.sin(theta) ** 2 / (2 * sigma_Y ** 2);
+    b = -torch.sin(2 * theta) / (4 * sigma_X ** 2) + torch.sin(2 * theta) / (4 * sigma_Y ** 2);
+    c = torch.sin(theta) ** 2 / (2 * sigma_X ** 2) + torch.cos(theta) ** 2 / (2 * sigma_Y ** 2);
+
+    Z = A * torch.exp(-(a * (X - x0) ** 2 + 2 * b * (X - x0) * (Y - y0) + c * (Y - y0) ** 2));
+    return Z
+    # plt.contour(X, Y, Z);
 
 
 if __name__ == '__main__':
 
     ii = 0
     NDIMZ = args.hidden_size
-    xl = 0
-    xr = torch.tensor(np.pi)
-    t0 = 0
-    tmax = torch.tensor(np.pi)
+    xl = -3
+    xr = 3#torch.tensor(np.pi)
+    t0 = -3
+    tmax = 3#torch.tensor(np.pi)
     x_evals = torch.linspace(xl,xr,50)
     y_evals = torch.linspace(t0,tmax,50)
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
@@ -221,7 +244,7 @@ if __name__ == '__main__':
     ic_t0.requires_grad=True
     ic_tmax.requires_grad=True
     # wout_gen = Transformer_Analytic()
-    func = ODEFunc(hidden_dim=NDIMZ,output_dim=args.num_ics)
+    func = ODEFunc(hidden_dim=NDIMZ,output_dim=1)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
@@ -241,9 +264,10 @@ if __name__ == '__main__':
             u = func(t_tr,x_tr)
             d2udt2 = diff(u,t_tr,2)
             d2udx2 = diff(u, x_tr, 2)
+            c = 1
+            rho1 = get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=0.1, theta=0)
 
-            rho = torch.sin(t_tr)*torch.sin(x_tr)
-            loss_diffeq = torch.mean((d2udt2 + d2udx2-rho)**2)
+            loss_diffeq = torch.mean((d2udt2 - c*d2udx2-rho1)**2)
 
             u_t0 = torch.mean((func(ic_t0,x_evals.reshape(-1,1)).ravel() - 0)**2)
             u_tmax = torch.mean((func(ic_tmax, x_evals.reshape(-1, 1)).ravel() - 0) ** 2)
@@ -267,18 +291,19 @@ if __name__ == '__main__':
                     visualize(u_eval,y_evals,x_evals,grid_t,grid_x, loss_collector)
                 # ii += 1
 
-        torch.save(func.state_dict(), 'func_ffnn_poisson')
+        torch.save(func.state_dict(), 'func_ffnn_wave')
 
     # with torch.no_grad():
-    rho = lambda v1,v2: 4+v1*0+v2*0#torch.sin(v1)*torch.cos(v2)
+    # rho = lambda v1,v2: get_rho(v1,v2,A=10,tmid=0,xmid=0,sigma_X=.1,sigma_Y=.5,theta=45)#4+v1*0+v2*0#torch.sin(v1)*torch.cos(v2)
     ft = lambda t: 0*t#3*torch.sin(t)
     fb = lambda t: 0*t#torch.sin(t)
     lbc = lambda t: 0*t#torch.sin(t)
     rbc = lambda t: 0*t#torch.cos(t)
+    rho1 = get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=0.1, theta=0)
 
-    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,rho)
+    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,3,rho1)
 
-    func.load_state_dict(torch.load('func_ffnn_poisson'))
+    func.load_state_dict(torch.load('func_ffnn_wave'))
     func.eval()
 
     x_evals = torch.linspace(xl, xr, 50)
@@ -294,13 +319,20 @@ if __name__ == '__main__':
     grid_xx = grid_x.ravel()
     grid_tt = grid_t.ravel()
 
-    WOUT = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,)
+    WOUT,Htt,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,)
 
     H = func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1))
 
+    # Htt = diff(H,grid_tt.reshape(-1,1),2)
+    # Hxx = diff(H,grid_xx.reshape(-1,1),2)
+
     with torch.no_grad():
         out_pred = (H@WOUT)
-        fig,ax = plt.subplots(1,3,figsize=(20,7))
+        # print((out_pred))
+        loss_test =Htt@WOUT + Hxx@WOUT-rho(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1))
+        print(torch.mean(loss_test**2))
+
+        fig,ax = plt.subplots(1,3,figsize=(15,5))
 
         pc=ax[0].contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
         ax[0].set_title('predicted solution')
