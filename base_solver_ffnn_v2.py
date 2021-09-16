@@ -24,12 +24,9 @@ parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
-
+parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
-
 scaler = MinMaxScaler()
-
 
 
 class diffeq(nn.Module):
@@ -93,7 +90,7 @@ class ODEFunc(nn.Module):
     function to learn the outputs u(t) and hidden states h(t) s.t. u(t) = h(t)W_out
     """
 
-    def __init__(self, hidden_dim,output_dim):
+    def __init__(self, hidden_dim, output_dim):
         super(ODEFunc, self).__init__()
         self.hdim = hidden_dim
         self.nl = nn.Tanh()
@@ -116,6 +113,7 @@ class ODEFunc(nn.Module):
         x = self.nl(x)
         return x
 
+
 def diff(u, t, order=1):
     # code adapted from neurodiffeq library
     # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
@@ -123,8 +121,7 @@ def diff(u, t, order=1):
     """
     # ones = torch.ones_like(u)
 
-
-    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])],1)
+    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])], 1)
     if der is None:
         print('derivative is None')
         return torch.zeros_like(t, requires_grad=True)
@@ -132,7 +129,7 @@ def diff(u, t, order=1):
         der.requires_grad_()
     for i in range(1, order):
 
-        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
+        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])], 1)
         # print()
         if der is None:
             print('derivative is None')
@@ -140,6 +137,7 @@ def diff(u, t, order=1):
         else:
             der.requires_grad_()
     return der
+
 
 class Transformer_Learned(nn.Module):
     """
@@ -192,7 +190,7 @@ if args.viz:
     plt.show(block=False)
 
 
-def visualize(true_y, pred_y,lst):
+def visualize(true_y, pred_y, lst):
     if args.viz:
         ax_traj.cla()
         ax_traj.set_title('Trajectories')
@@ -217,29 +215,38 @@ if __name__ == '__main__':
     NDIMZ = args.hidden_size
     # define coefficients as lambda functions, used for gt and wout_analytic
     # training differential equation
-    a0 = lambda t: t
-    a1 = lambda t: 1+0*t
-    f = lambda t: torch.cos(t)
 
-    diffeq_init = diffeq(a0, a1, f)
-    gt_generator = base_diffeq(diffeq_init)
-    estim_generator = estim_diffeq(diffeq_init)
+    #need to sample tuple of (a1,f,IC)
+    # each column of Wouts defines a solution thus, each tuple defines a solution too
+
+
+    f_train = [lambda t: torch.cos(t),lambda t: torch.sin(t), lambda t:torch.sin(t)*torch.cos(t),lambda t: 0*t, lambda t: t**2]
+    a0_train = [lambda t: t, lambda t: t**2, lambda t: 3+5*t,lambda t: t**4 -20,lambda t: t**2-t]
+
+    # legacy
+    # a0 = lambda t: t
+    # a1 = lambda t: 1 + 0 * t
+    # f = lambda t: torch.cos(t)
+    #
+    # diffeq_init = diffeq(a0, a1, f)
+    # gt_generator = base_diffeq(diffeq_init)
+    # estim_generator = estim_diffeq(diffeq_init)
     if args.num_ics == 1:
         true_y0 = torch.tensor([[5.]])
     else:
         r1 = -5.
         r2 = 5.
-        true_y0 = (r2-r1)*torch.rand(args.num_ics) + r1
+        true_y0 = (r2 - r1) * torch.rand(args.num_ics) + r1
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
 
-    #use this quick test to find gt solutions and check training ICs
-    #have a solution (don't blow up for dopri5 integrator)
-    true_y = gt_generator.get_solution(true_y0.reshape(-1,1), t.ravel())
+    # use this quick test to find gt solutions and check training ICs
+    # have a solution (don't blow up for dopri5 integrator)
+    true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
 
     # instantiate wout with coefficients
     wout_gen = Transformer_Analytic(a0, a1, f, 0.0)
-    func = ODEFunc(hidden_dim=NDIMZ,output_dim=args.num_ics)
+    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_ics)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
 
@@ -260,12 +267,13 @@ if __name__ == '__main__':
 
             # compute hwout,hdotwout
             pred_y = func(tv)
-            pred_ydot = diff(pred_y,tv)
-            #enforce diffeq
-            loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
-                tv.detach()).reshape(-1, 1)
+            pred_ydot = diff(pred_y, tv)
+            # enforce diffeq
+            loss_diffeq = pred_ydot - diffeq_init(tv,pred_y)
+            # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
+            #     tv.detach()).reshape(-1, 1)
 
-            #enforce initial conditions
+            # enforce initial conditions
             loss_ics = pred_y[0, :].ravel() - true_y0.ravel()
 
             loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(torch.square(loss_ics))
@@ -283,9 +291,9 @@ if __name__ == '__main__':
 
     # with torch.no_grad():
 
-    a0 = lambda t: 0.3*t
+    a0 = lambda t: 0.3 * t
     a1 = lambda t: 1. + 0. * t
-    f = lambda t: torch.cos(t)*torch.sin(t)
+    f = lambda t: torch.cos(t) * torch.sin(t)
 
     diffeq_init = diffeq(a0, a1, f)
     gt_generator = base_diffeq(diffeq_init)
@@ -298,7 +306,7 @@ if __name__ == '__main__':
     func.eval()
 
     h = func.h(t)
-    hd = diff(h,t)
+    hd = diff(h, t)
     h = h.detach()
     hd = hd.detach()
 
@@ -314,7 +322,8 @@ if __name__ == '__main__':
     if pca_comps.shape[1] >= 2:
         s = 10  # Segment length
         for i in range(0, len(gz_np) - s, s):
-            ax.plot3D(pca_comps[i:i+s+1, 0], pca_comps[i:i+s+1, 1],pca_comps[i:i+s+1,2],color=(0.1,0.8,T[i]))
+            ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
+                      color=(0.1, 0.8, T[i]))
             plt.xlabel('comp1')
             plt.ylabel('comp2')
 
@@ -347,14 +356,14 @@ if __name__ == '__main__':
     print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
     print(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
 
-    fig,ax = plt.subplots(2,1,figsize=(10,8),sharex=True)
+    fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     # print(true_ys[0,:])
-    for i in range(0,args.num_test_ics,50):
-        ax[0].plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i],c='blue',linestyle='dashed')
+    for i in range(0, args.num_test_ics, 50):
+        ax[0].plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i], c='blue', linestyle='dashed')
         ax[0].plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], c='orange')
         # plt.draw()
 
-    ax[1].plot(t.detach().cpu().numpy(),((true_ys-pred_y)**2).mean(1).cpu().numpy(),c='green')
+    ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
     ax[1].set_xlabel('Time (s)')
     plt.legend()
     plt.show()

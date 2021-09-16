@@ -337,7 +337,7 @@ if __name__ == '__main__':
     a0_samples = random.choices(a0_test, k=args.num_bundles_test)
     y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles_test)).reshape(1, -1)
 
-    print(y0_samples.shape)
+    # print(y0_samples.shape)
     diffeq_init = diffeq(a0_samples, f_samples)
     gt_generator = base_diffeq(diffeq_init)
 
