@@ -242,6 +242,14 @@ class Transformer_Analytic(nn.Module):
         LHS = DH.t() @ DH + h0m @ h0m.t()
         RHS = -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1))
 
+        from sklearn.datasets import load_diabetes
+        from sklearn.linear_model import RidgeCV
+        #X, y = load_diabetes(return_X_y=True)
+        clf = RidgeCV(alphas=[1e-3, 1e-2, 1e-1, 1]).fit(LHS, RHS)
+
+        breakpoint()
+        
+
         if self.lambda_:
             LHS = LHS + self.lambda_ * torch.eye(LHS.shape[0])
         W0 = torch.linalg.solve(LHS, RHS)
