@@ -13,8 +13,6 @@ from torchdiffeq import odeint_adjoint as odeint
 from mpl_toolkits.mplot3d import Axes3D
 import random
 
-
-
 parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=6.)
@@ -122,7 +120,7 @@ class ODEFunc(nn.Module):
 def diff(u, t, order=1):
     # code adapted from neurodiffeq library
     # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
-    r"""The derivative of a variable with respect to another.
+    """The derivative of a variable with respect to another.
     """
     # ones = torch.ones_like(u)
 
@@ -158,31 +156,39 @@ class Transformer_Learned(nn.Module):
 
 
 
-def get_wout(s, sd, y0, t):
+def get_wout(s, sd,sdd, y0,y0dot,m1,m2,k1,k2, t):
+
+
+    Lmat = torch.tensor([[m1, 0.], [0., m2]])
+    Rmat = torch.tensor([[k1 + k2, -k2], [-k2, k1 + k2]])
+
+    Amatrix = torch.linalg.inv(Lmat)@Rmat
+
     y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
-
+    hddothat = torch.block_diag(sdd,sdd)
     hdothat = torch.block_diag(sd,sd)
     hhat = torch.block_diag(s,s)
 
-    Amatrix = torch.tensor([[0., 1.], [-1., 0.]])
 
     Amatrixhat = torch.zeros((hdothat.shape[0],hdothat.shape[0]))
     # print(Amatrix.shape)
     for i in range(Amatrix.shape[0]):
         for j in range(Amatrix.shape[1]):
-            print(Amatrix[i,j])
-            Amatrixhat[i*s.shape[0]:(i+1)*s.shape[0],j*s.shape[0]:(j+1)*s.shape[0]]=torch.ones(s.shape[0],s.shape[0])*Amatrix[i,j]
+            # print(Amatrix[i,j])
+            Amatrixhat[i*s.shape[0]:(i+1)*s.shape[0],j*s.shape[0]:(j+1)*s.shape[0]]=torch.eye(s.shape[0],s.shape[0])*Amatrix[i,j]
 
 
-    top = torch.cat([torch.zeros_like(s),s],1)
-    bottom = torch.cat([-s, torch.zeros_like(s)], 1)
-    rhs = torch.cat([top,bottom],0)
-    DH = hdothat - rhs#Amatrixhat@hhat
+    # top = torch.cat([torch.zeros_like(s),s],1)
+    # bottom = torch.cat([-s, torch.zeros_like(s)], 1)
+    # rhs = torch.cat([top,bottom],0)
+    DH = hddothat + Amatrixhat@hhat
 
     h0= torch.block_diag(s[0,:].reshape(1,-1),s[0,:].reshape(1,-1))
 
-    W0 = torch.linalg.solve(DH.t()@DH + h0.t()@h0, h0.t()@(y0[0,:].reshape(-1,1)) )
+    h0dot = torch.block_diag(sd[0, :].reshape(1, -1), sd[0, :].reshape(1, -1))
+
+    W0 = torch.linalg.solve(DH.t()@DH + h0.t()@h0 + h0dot.t()@h0dot, h0.t()@(y0[0,:].reshape(-1,1)) + h0dot.t()@(y0dot[0,:].reshape(-1,1)) )
     return W0
 
     # print(f's {s.shape}')
@@ -234,6 +240,19 @@ def visualize(true_y, pred_y, lst):
         plt.pause(0.001)
 
 
+
+def get_m(x_in,m1,m2):
+    Amatrix = torch.tensor([[m1, 0.], [0., m2]])
+    output = Amatrix @ x_in.t()
+    return output.t()
+
+def get_k(x_in,k1,k2):
+    Amatrix = torch.tensor([[k1+k2, -k2], [-k2, k1+k2]])
+    output = Amatrix @ x_in.t()
+    return output.t()
+
+
+
 if __name__ == '__main__':
 
     ii = 0
@@ -244,6 +263,9 @@ if __name__ == '__main__':
 
     #true_y0 = (r2 - r1) * torch.rand(2) + r1
     true_y0 = torch.tensor([1.,1.]).reshape(1,2)
+    true_y0dot = torch.tensor([1., 3.]).reshape(1, 2)
+
+
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
 
@@ -251,11 +273,11 @@ if __name__ == '__main__':
     diffeq_init = diffeq()
     gt_generator = base_diffeq(diffeq_init)
 
-    true_y = gt_generator.get_solution(true_y0.reshape(1,2),t.ravel()).reshape(-1,2)
+    # true_y = gt_generator.get_solution(true_y0.reshape(1,2),t.ravel()).reshape(-1,2)
 
     # use this quick test to find gt solutions and check training ICs
     # have a solution (don't blow up for dopri5 integrator)
-    # true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
+    true_y = gt_generator.get_solution(true_y0.reshape(-1, 2), t.ravel()).reshape(-1,2)
 
     # instantiate wout with coefficients
     func = ODEFunc(hidden_dim=NDIMZ, output_dim=2)
@@ -279,15 +301,16 @@ if __name__ == '__main__':
 
             # compute hwout,hdotwout
             pred_y = func(tv)
-            pred_ydot = diff(pred_y, tv)
+            pred_ydot = diff(pred_y,tv)
+            pred_yddot = diff(pred_ydot, tv,1)
 
             # enforce diffeq
-            loss_diffeq = pred_ydot - get_udot(pred_y)
+            loss_diffeq = get_m(pred_yddot,m1=1.,m2=1.) + get_k(pred_y,k1=0.5,k2=0.5)
             # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
             #     tv.detach()).reshape(-1, 1)
 
             # enforce initial conditions
-            loss_ics = pred_y[0, :].ravel() - true_y0.ravel()
+            loss_ics = (pred_y[0, :].ravel() - true_y0.ravel()) + (pred_ydot[0, :].ravel() - true_y0dot.ravel())
 
             loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(torch.square(loss_ics))
             loss.backward()
@@ -300,7 +323,7 @@ if __name__ == '__main__':
                 visualize(true_y.detach(), pred_y.detach(), loss_collector)
                 ii += 1
 
-        torch.save(func.state_dict(), 'func_ffnn_systems')
+        torch.save(func.state_dict(), 'func_ffnn_systems_coupled')
 
     # with torch.no_grad():
 
@@ -308,7 +331,9 @@ if __name__ == '__main__':
     r1 = 0.5
 
     # true_y0 = (r2 - r1) * torch.rand(2) + r1
-    true_y0 = torch.tensor([10., 15.]).reshape(1, 2)
+    true_y0 = torch.tensor([1., 1.]).reshape(1, 2)
+
+    true_y0dot = torch.tensor([1., 3.]).reshape(1, 2)
 
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
@@ -317,13 +342,15 @@ if __name__ == '__main__':
     gt_generator = base_diffeq(diffeq_init)
 
 
-    func.load_state_dict(torch.load('func_ffnn_systems'))
+    func.load_state_dict(torch.load('func_ffnn_systems_coupled'))
     func.eval()
 
     h = func.h(t)
     hd = diff(h, t)
+    hdd = diff(hd,t)
     h = h.detach()
     hd = hd.detach()
+    hdd = hdd.detach()
 
     gz_np = h.detach().numpy()
     T = np.linspace(0, 1, len(gz_np)) ** 2
@@ -344,9 +371,15 @@ if __name__ == '__main__':
 
 
     s1 = time.time()
-    wout = get_wout(h, hd, true_y0, t.detach())
 
-    print(wout)
+    m1 = 5.
+    m2 = 1.
+    k1 = 0.5
+    k2 = 0.5
+
+    wout = get_wout(h, hd,hdd, true_y0,true_y0dot,m1,m2,k1,k2, t.detach())
+
+    # print(wout)
     # print(f'wout {wout.shape}')
     # woutn = wout.reshape(2,100)
     # wout = woutn.t()
@@ -355,17 +388,21 @@ if __name__ == '__main__':
 
     # print(wout)
     pred_y = h @ nwout
+    pred_yddot = hdd@nwout
 
-    print(f'predy:{pred_y}')
+    print('final loss')
+    print(((get_m(pred_yddot,m1,m2)+get_k(pred_y,k1,k2))**2).mean())
+
+    # print(f'predy:{pred_y}')
     s2 = time.time()
     print(f'all_ics:{s2 - s1}')
-    print(pred_y)
+    # print(pred_y)
     s1 = time.time()
     true_ys = (gt_generator.get_solution(true_y0, t.ravel())).reshape(-1, 2)
     s2 = time.time()
     print(f'gt_ics:{s2 - s1}')
 
-    print(true_ys.shape,pred_y.shape)
+    # print(true_ys.shape,pred_y.shape)
 
     # s1 = time.time()
     # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
