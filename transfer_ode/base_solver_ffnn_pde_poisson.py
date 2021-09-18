@@ -23,6 +23,7 @@ parser.add_argument('--bs', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--random_sampling', action='store_false')
 
 args = parser.parse_args()
 from torchdiffeq import odeint_adjoint as odeint

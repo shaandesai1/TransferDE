@@ -12,6 +12,10 @@ from sklearn.preprocessing import MinMaxScaler
 from torchdiffeq import odeint_adjoint as odeint
 from mpl_toolkits.mplot3d import Axes3D
 import random
+import parser_args # import *
+import matplotlib.pyplot as plt
+
+from sklearn.preprocessing import StandardScaler
 
 
 
@@ -30,6 +34,16 @@ import random
 # parser.add_argument('--evaluate_only', action='store_false')
 # args = parser.parse_args()
 # scaler = MinMaxScaler()
+
+#instead of keeping the parser args localy we can externalize them
+parser = parser_args.parse_args_bundles_('transfer demo')
+args = parser.parse_args()
+locals().update(args.__dict__)
+
+
+scaler = MinMaxScaler()
+
+
 
 
 class diffeq(nn.Module):
@@ -174,10 +188,10 @@ class Transformer_Analytic(nn.Module):
     returns Wout analytic, need to define the parameter coefficients
     """
 
-    def __init__(self, lambda_, calc_bias):
+    def __init__(self, lambda_, no_calc_bias):
         super(Transformer_Analytic, self).__init__()
 
-        self.calc_bias = calc_bias
+        self.calc_bias = not no_calc_bias
         self.lambda_ = lambda_
 
     def calc_bias(self, weights):
@@ -214,7 +228,7 @@ class Transformer_Analytic(nn.Module):
 
         y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
-        if self.calc_bias:
+        if self.calc_bias and not ridge:
             ones_col = torch.ones_like(s[:,0]).view(-1,1)
             #states with bias
             s = torch.hstack((ones_col, s))
@@ -236,30 +250,43 @@ class Transformer_Analytic(nn.Module):
         D0 = -f
 
         DH = (a1*sd + a0 * s)
+
+        # if ridge:
+        #     global DH_means
+        #     DH_means = DH.mean(axis = 0)
+        #     DH = DH- DH_means
         h0m = s[0].reshape(-1, 1)
 
 
         LHS = DH.t() @ DH + h0m @ h0m.t()
         RHS = -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1))
 
-        from sklearn.datasets import load_diabetes
-        from sklearn.linear_model import RidgeCV
-        #X, y = load_diabetes(return_X_y=True)
-        clf = RidgeCV(alphas=[1e-3, 1e-2, 1e-1, 1]).fit(LHS, RHS)
+        #alphas=[1e-3, 1e-2, 1e-1, 1]
 
-        breakpoint()
+        #breakpoint()
         
 
-        if self.lambda_:
-            LHS = LHS + self.lambda_ * torch.eye(LHS.shape[0])
-        W0 = torch.linalg.solve(LHS, RHS)
+        # if self.lambda_:
+        #     LHS = LHS + self.lambda_ * torch.eye(LHS.shape[0])
+        if ridge:
+            from sklearn.linear_model import RidgeCV
+
+            clf = RidgeCV(fit_intercept = True).fit(LHS, RHS) 
+            
+
+        else:
+
+            W0 = torch.linalg.solve(LHS, RHS)
 
         #W0 = torch.linalg.solve( LHS , -DH.T @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
-        if self.calc_bias:
+        if self.calc_bias and not ridge:
             weight = W0[1:]
             bias = W0[0]
             W0 = weight
+        elif ridge:
+            W0  = torch.tensor(clf.coef_, dtype = torch.float32).T
+            bias = clf.intercept_
         else:
             bias = 0
         return W0, bias
@@ -356,4 +383,242 @@ def visualize(true_y, pred_y, lst):
 
         plt.draw()
         plt.pause(0.001)
+
+# def optimize(a0 = lambda t: t**2,#-(5./t + t)#-3*t**2
+#              a1 = lambda t:1 + 0.*t,
+#              f = lambda t: torch.sin(t),#t**6#3*t**2#torch.sin(t)
+#              ics = torch.tensor(np.arange(-2.9, 2.9, 0.1), dtype = torch.float32),#torch.linspace(-7.,7.,200),
+#              method : str = "dopri5", 
+#              tmax : float = 5,
+#              #dt   : int   = 0.01,
+#              method_rc: str = "euler",
+#              wout : str = "analytic",
+#              paramg : str = "lin",
+#              niters : int = 100,
+#              hidden_size : int = 200,
+#              viz = False,#'store_false',
+#              gpu : int = 0,
+#              adjoint = 'store_false',
+#              random_sampling = True,
+#              n_timepoints = 50,
+#              regularization = 0,
+#              l1_reg_strength = 0,
+#              #visualize_ = False,
+#              niters_test: int =15000,
+#              num_bundles: int= 20,
+#              num_bundles_test : int =20,
+#              test_freq :int =10,
+#              evaluate_only : bool = False,
+#              bias_at_inference : bool = False,
+#              ffnn_bias: bool = False,
+#              force_bias : int  = 0
+#             ):
+if __name__ == "__main__":
+    # args = Args()
+    
+    # args.assign(locals())
+    # args = args
+    #assert False, args.__dict__
+    print(f' bias_at_inference {not no_bias_at_inference}, ridge {ridge}')
+    if args.wout == 'analytic':
+        wout_gen = Transformer_Analytic(regularization, no_bias_at_inference)
+        #wout_gen = Transformer_Analytic(a0, a1, f, regularization)
+        
+        
+    
+    dt=tmax/n_timepoints
+    args.dt = dt
+    
+    if not random_sampling:
+        t = torch.arange(0.,args.tmax,args.dt)
+    else:
+        t = torch.rand(n_timepoints) *tmax
+        t = t.sort().values
+    
+    t = t.reshape(-1,1)
+    
+    #assign_vars(compute_s_sdot, "t", t)
+    
+    
+    globals()["args"] = args
+    
+    ii = 0
+    NDIMZ = args.hidden_size
+    # define coefficients as lambda functions, used for gt and wout_analytic
+    # training differential equation
+
+    #need to sample tuple of (a1,f,IC)
+    # each column of Wouts defines a solution thus, each tuple defines a solution too
+
+
+    f_train = [lambda t: torch.cos(t) + force_bias,
+               lambda t: torch.cos(t) - force_bias,
+               lambda t: torch.sin(t) - force_bias, 
+               lambda t: torch.sin(t) + force_bias, 
+               lambda t: torch.sin(t)* torch.cos(t) - force_bias,
+               lambda t: torch.sin(t)* torch.cos(t) + force_bias]
+    a0_train = [lambda t:t**2]
+    r1 = -10.
+    r2 = 10.
+    true_y0 = (r2 - r1) * torch.rand(100) + r1
+    t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
+    t.requires_grad = True
+
+    # sample each parameter to build the tuples
+    f_samples = random.choices(f_train, k=args.num_bundles)
+    a0_samples = random.choices(a0_train, k=args.num_bundles)
+    y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles)).reshape(1,-1)
+
+    diffeq_init = diffeq(a0_samples,f_samples)
+    gt_generator = base_diffeq(diffeq_init)
+    true_y = gt_generator.get_solution(y0_samples,t.ravel()).reshape(-1,args.num_bundles)
+
+    # use this quick test to find gt solutions and check training ICs
+    # have a solution (don't blow up for dopri5 integrator)
+    # true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
+
+    # instantiate wout with coefficients
+    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = ffnn_bias)
+
+    optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
+    
+    
+
+    loss_collector = []
+
+    if not args.evaluate_only:
+
+        for itr in range(1, args.niters + 1):
+            func.train()
+
+            # add t0 to training times, including randomly generated ts
+            t0 = torch.tensor([[0.]])
+            t0.requires_grad = True
+            tv = args.tmax * torch.rand(int(args.tmax / args.dt)).reshape(-1, 1)
+            tv.requires_grad = True
+            tv = torch.cat([t0, tv], 0)
+            optimizer.zero_grad()
+
+            # compute hwout,hdotwout
+            pred_y = func(tv)
+            pred_ydot = diff(pred_y, tv)
+            
+            
+
+            # enforce diffeq
+            loss_diffeq = pred_ydot - get_udot(tv,pred_y,a0_samples,f_samples)
+            # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
+            #     tv.detach()).reshape(-1, 1)
+
+            # enforce initial conditions
+            loss_ics = pred_y[0, :].ravel() - y0_samples.ravel()
+
+            loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(torch.square(loss_ics))
+            loss.backward()
+            optimizer.step()
+            loss_collector.append(torch.square(loss_diffeq).mean().item())
+            if itr % args.test_freq == 0:
+                func.eval()
+                pred_y = func(t).detach()
+                pred_y = pred_y.reshape(-1, args.num_bundles)
+                visualize(true_y.detach(), pred_y.detach(), loss_collector)
+                ii += 1
+
+        #torch.save(func.state_dict(), 'func_ffnn_bundles')
+
+    # with torch.no_grad():
+
+    f_test = [lambda t: torch.sin(t)]
+    a0_test = [lambda t: t**3]
+    r1 = -15.
+    r2 = 15.
+    true_y0 = (r2 - r1) * torch.rand(100) + r1
+    t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
+    t.requires_grad = True
+
+    # sample each parameter to build the tuples
+    f_samples = random.choices(f_test, k=args.num_bundles_test)
+    a0_samples = random.choices(a0_test, k=args.num_bundles_test)
+    y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles_test)).reshape(1, -1)
+
+    # print(y0_samples.shape)
+    diffeq_init = diffeq(a0_samples, f_samples)
+    gt_generator = base_diffeq(diffeq_init)
+
+
+    #func.load_state_dict(torch.load('func_ffnn_bundles'))
+    func.eval()
+
+    h = func.h(t)
+
+    # if ridge:
+    #     #std_scaler = StandardScaler()
+    #     h = (h  -h.mean(axis =0))/h.std(axis = 0) #std_scaler.fit_transform(h)
+    #     #h = torch.tensor(h, dtype = torch.float32)
+
+
+
+    hd = diff(h, t)
+    h = h.detach()
+    hd = hd.detach()
+
+    gz_np = h.detach().numpy()
+    T = np.linspace(0, 1, len(gz_np)) ** 2
+    new_hiddens = scaler.fit_transform(gz_np)
+    pca = PCA(n_components=3)
+    pca_comps = pca.fit_transform(new_hiddens)
+
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+
+    if pca_comps.shape[1] >= 2:
+        s = 10  # Segment length
+        for i in range(0, len(gz_np) - s, s):
+            ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
+                      color=(0.1, 0.8, T[i]))
+            plt.xlabel('comp1')
+            plt.ylabel('comp2')
+
+    s1 = time.time()
+
+    wout, bias = wout_gen.get_wout(h, hd, y0_samples, t.detach(), a0_samples[0], f_samples)
+    pred_y = h @ wout + bias
+
+    s2 = time.time()
+    print(f'all_ics:{s2 - s1}')
+
+    s1 = time.time()
+    true_ys = (gt_generator.get_solution(y0_samples, t.ravel())).reshape(-1, args.num_bundles_test)
+    s2 = time.time()
+    print(f'gt_ics:{s2 - s1}')
+
+    print(true_ys.shape,pred_y.shape)
+
+    # s1 = time.time()
+    # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
+    # estim_ys = true_y.reshape(len(pred_y), ics.shape[1])
+    # s2 = time.time()
+    # print(f'estim_ics:{s2 - s1}')
+
+    print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
+    #rint(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
+
+    fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    # print(true_ys[0,:])
+    for i in range(0, args.num_bundles_test, 50):
+        gt = true_ys.cpu().numpy()[:, i]
+        preds = pred_y.cpu().numpy()[:, i]
+        ax[0].plot(t.detach().cpu().numpy(), gt, c='blue', linestyle='dashed')
+        ax[0].plot(t.detach().cpu().numpy(),  preds , c='orange')
+        # plt.draw()
+
+    ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
+    ax[1].set_xlabel('Time (s)')
+    #plt.legend()
+    plt.show()
+    
+    prediction_residuals = ((pred_y - true_ys) ** 2)
+    #estimation_residuals = ((estim_ys - true_ys) ** 2)
+    score = prediction_residuals.mean()
+    #return score, pred_y, true_y#, estim_ys
 
