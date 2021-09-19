@@ -16,6 +16,19 @@ import parser_args # import *
 import matplotlib.pyplot as plt
 
 from sklearn.preprocessing import StandardScaler
+import os
+
+import sys
+
+import f_gen
+import torch
+import pickle
+import pandas as pd
+
+if sys.stdin and sys.stdin.isatty():
+    print("iteractive")
+else:
+    print("not interactive")
 
 
 
@@ -40,10 +53,7 @@ parser = parser_args.parse_args_bundles_('transfer demo')
 args = parser.parse_args()
 locals().update(args.__dict__)
 
-
 scaler = MinMaxScaler()
-
-
 
 
 class diffeq(nn.Module):
@@ -228,7 +238,7 @@ class Transformer_Analytic(nn.Module):
 
         y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
-        if self.calc_bias and not ridge:
+        if self.calc_bias:
             ones_col = torch.ones_like(s[:,0]).view(-1,1)
             #states with bias
             s = torch.hstack((ones_col, s))
@@ -268,25 +278,26 @@ class Transformer_Analytic(nn.Module):
 
         # if self.lambda_:
         #     LHS = LHS + self.lambda_ * torch.eye(LHS.shape[0])
-        if ridge:
-            from sklearn.linear_model import RidgeCV
+        # if ridge:
+        #     from sklearn.linear_model import RidgeCV
 
-            clf = RidgeCV(fit_intercept = True).fit(LHS, RHS) 
+        #     clf = RidgeCV(fit_intercept = True).fit(LHS, RHS) 
             
 
-        else:
+        # else:
+        #self.lambda_ = 100
 
-            W0 = torch.linalg.solve(LHS, RHS)
+        W0 = torch.linalg.solve(LHS, RHS)
 
         #W0 = torch.linalg.solve( LHS , -DH.T @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
-        if self.calc_bias and not ridge:
+        if self.calc_bias:
             weight = W0[1:]
             bias = W0[0]
             W0 = weight
-        elif ridge:
-            W0  = torch.tensor(clf.coef_, dtype = torch.float32).T
-            bias = clf.intercept_
+            # elif ridge:
+            #     W0  = torch.tensor(clf.coef_, dtype = torch.float32).T
+            #     bias = clf.intercept_
         else:
             bias = 0
         return W0, bias
@@ -364,9 +375,17 @@ class Transformer_Analytic(nn.Module):
 #     # h0m = s[0].reshape(-1, 1)
 #     # W0 = torch.linalg.solve(DH.t() @ DH + lambda_0 + h0m @ h0m.t(), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 #     # return W0
+import matplotlib.pyplot as plt
 
+# fig = plt.figure(figsize=(12, 4), facecolor='white')
+# ax_traj = fig.add_subplot(131, frameon=False)
+# ax_phase = fig.add_subplot(132, frameon=False)
+# ax_vecfield = fig.add_subplot(133, frameon=False)
+#plt.show(block=False)
 
-def visualize(true_y, pred_y, lst):
+def visualize(t, true_y, pred_y, lst):
+    
+
     if args.viz:
         ax_traj.cla()
         ax_traj.set_title('Trajectories')
@@ -413,13 +432,21 @@ def visualize(true_y, pred_y, lst):
 #              ffnn_bias: bool = False,
 #              force_bias : int  = 0
 #             ):
-if __name__ == "__main__":
+
+#if args.viz:
+    
+
+def optimize(ic_train_range, ic_test_range):
+
+    ic_train_range = [int(num) for num in ic_train_range]
+    ic_test_range = [int(num) for num in ic_test_range]
     # args = Args()
     
     # args.assign(locals())
     # args = args
     #assert False, args.__dict__
-    print(f' bias_at_inference {not no_bias_at_inference}, ridge {ridge}')
+    # print(f' bias_at_inference {not no_bias_at_inference}, ridge {ridge}')
+    # print(f' bias_at_inference {ffnn_bias}, ridge {ridge}')
     if args.wout == 'analytic':
         wout_gen = Transformer_Analytic(regularization, no_bias_at_inference)
         #wout_gen = Transformer_Analytic(a0, a1, f, regularization)
@@ -450,16 +477,25 @@ if __name__ == "__main__":
     #need to sample tuple of (a1,f,IC)
     # each column of Wouts defines a solution thus, each tuple defines a solution too
 
+    hp1 = phase_shift = 2*np.pi
+    hp2 = amplitude_range = 5
+    hp3 = angular_freq_range = 3
 
-    f_train = [lambda t: torch.cos(t) + force_bias,
-               lambda t: torch.cos(t) - force_bias,
-               lambda t: torch.sin(t) - force_bias, 
-               lambda t: torch.sin(t) + force_bias, 
-               lambda t: torch.sin(t)* torch.cos(t) - force_bias,
-               lambda t: torch.sin(t)* torch.cos(t) + force_bias]
+    f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+
+    f_train = [torch.sin, torch.cos] +[ f_generator.realize_recursive() for _ in range(n_forces)] #+ [ f_generator.realize() for _ in range(n_forces)]
+    # f_train = [lambda t: torch.cos(t) + force_bias,
+    #            lambda t: torch.cos(t) - force_bias,
+    #            lambda t: torch.sin(t) - force_bias, 
+    #            lambda t: torch.sin(t) + force_bias, 
+    #            lambda t: torch.sin(t)* torch.cos(t) - force_bias,
+    #            lambda t: torch.sin(t)* torch.cos(t) + force_bias]
+
     a0_train = [lambda t:t**2]
-    r1 = -10.
-    r2 = 10.
+
+    r1 = ic_train_range[0]
+    r2 = ic_train_range[1]
+
     true_y0 = (r2 - r1) * torch.rand(100) + r1
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
@@ -481,12 +517,39 @@ if __name__ == "__main__":
     func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = ffnn_bias)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
-    
-    
 
     loss_collector = []
+    if not "exp_name" in locals().keys():
+        exp_name = ""
+
+    bp = "../results/"
+
+    try:
+        os.mkdir(bp)
+    except:
+        pass
+    bp += 'func_ffnn_bundles/'
+    try:
+        os.mkdir(bp)
+    except:
+        pass
+    experiment_name = "t2/"
+    bp +=experiment_name
+    try:
+        os.mkdir(bp)
+    except:
+        pass
+
+    filename = bp + "__num_bundles_"+  str(num_bundles) + "__num_forces_" + str(num_bundles)
+    exp_name = filename  + ".pt"
+
+    #if args.viz:
+
+    #assert False, args
+    
 
     if not args.evaluate_only:
+        assert False, "sadf"
 
         for itr in range(1, args.niters + 1):
             func.train()
@@ -521,17 +584,22 @@ if __name__ == "__main__":
                 func.eval()
                 pred_y = func(t).detach()
                 pred_y = pred_y.reshape(-1, args.num_bundles)
-                visualize(true_y.detach(), pred_y.detach(), loss_collector)
+                # if args.viz:
+                #     visualize(t, true_y.detach(), pred_y.detach(), loss_collector)
                 ii += 1
-
-        #torch.save(func.state_dict(), 'func_ffnn_bundles')
+        #print("saving", func.state_dict() )
+        torch.save(func.state_dict(), exp_name)
 
     # with torch.no_grad():
+    scale_factor = 1.2
+    hp1, hp2, hp3 = [hp *scale_factor for hp in [hp1, hp2, hp3]]
 
-    f_test = [lambda t: torch.sin(t)]
-    a0_test = [lambda t: t**3]
-    r1 = -15.
-    r2 = 15.
+    wave_gen_test = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+
+    f_test = [ wave_gen_test.realize_recursive() for _ in range(num_bundles_test)] #[lambda t: torch.sin(t)*torch.cos(t)]+
+    a0_test = [lambda t: t**2]
+    r1 = ic_test_range[0]
+    r2 = ic_test_range[1]
     true_y0 = (r2 - r1) * torch.rand(100) + r1
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
@@ -545,18 +613,13 @@ if __name__ == "__main__":
     diffeq_init = diffeq(a0_samples, f_samples)
     gt_generator = base_diffeq(diffeq_init)
 
+    
 
-    #func.load_state_dict(torch.load('func_ffnn_bundles'))
+    if not args.save:
+        func.load_state_dict(torch.load(exp_name ))
     func.eval()
 
     h = func.h(t)
-
-    # if ridge:
-    #     #std_scaler = StandardScaler()
-    #     h = (h  -h.mean(axis =0))/h.std(axis = 0) #std_scaler.fit_transform(h)
-    #     #h = torch.tensor(h, dtype = torch.float32)
-
-
 
     hd = diff(h, t)
     h = h.detach()
@@ -565,19 +628,42 @@ if __name__ == "__main__":
     gz_np = h.detach().numpy()
     T = np.linspace(0, 1, len(gz_np)) ** 2
     new_hiddens = scaler.fit_transform(gz_np)
-    pca = PCA(n_components=3)
-    pca_comps = pca.fit_transform(new_hiddens)
+    
 
-    fig = plt.figure()
-    ax = plt.axes(projection='3d')
+    if plot_pca or plot_tsne:
 
-    if pca_comps.shape[1] >= 2:
-        s = 10  # Segment length
-        for i in range(0, len(gz_np) - s, s):
-            ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
-                      color=(0.1, 0.8, T[i]))
-            plt.xlabel('comp1')
-            plt.ylabel('comp2')
+        fig = plt.figure()
+        ax = plt.axes(projection='3d')
+
+
+
+        from sklearn.manifold import TSNE
+        if plot_tsne:
+            pca = PCA(n_components=plot_tsne)
+        else:
+            pca = PCA(n_components=3)
+
+        comps = pca.fit_transform(new_hiddens)
+
+        if plot_tsne:
+            comps = TSNE(n_components=3).fit_transform(comps)
+            comps = comps[comps[:, 0].argsort()]
+
+        
+        if comps.shape[1] >= 2:
+            s = 10  # Segment length
+            for i in range(0, len(gz_np) - s, s):
+
+                if plot_tsne:
+                    ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
+                              color=(0.1, 0.8, T[i]))
+                else:
+
+                    ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
+                              color=(0.1, 0.8, T[i]))
+                plt.xlabel('comp1')
+                plt.ylabel('comp2')
+            
 
     s1 = time.time()
 
@@ -615,10 +701,34 @@ if __name__ == "__main__":
     ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
     ax[1].set_xlabel('Time (s)')
     #plt.legend()
-    plt.show()
+    #plt.show()
+
+    if args.save:
+
+        fig.savefig(filename + "_pca")
     
     prediction_residuals = ((pred_y - true_ys) ** 2)
     #estimation_residuals = ((estim_ys - true_ys) ** 2)
     score = prediction_residuals.mean()
-    #return score, pred_y, true_y#, estim_ys
+    return score, pred_y, true_y, filename
 
+
+if __name__ == "__main__":
+    score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
+    
+    if evaluate_only:
+        results = {"scores" : [], "pred_ys" : [], "true_ys" : []}
+        for i in range(10):
+            
+            score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
+            results["scores"].append(score)
+            results["pred_ys"].append(pred_y)
+            results["pred_ys"].append(true_y)
+
+        with open(filename + '.pickle', 'wb') as f:
+            pickle.dump(results, f)
+
+        df2 = pd.read_pickle(filename + '.pickle')
+        print(df2)
+
+    

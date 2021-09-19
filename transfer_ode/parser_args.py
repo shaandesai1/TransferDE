@@ -35,10 +35,24 @@ def parse_args_bundles_(str_):
 	parser.add_argument('--niters_test', type = int, default =15000)
 	parser.add_argument('--num_bundles', type =int, default= 20)
 	parser.add_argument('--l1_reg_strength', type = int, default = 0)
-	parser.add_argument('--num_bundles_test', type = int, default = 20)
+	parser.add_argument('--num_bundles_test', type = int, default = 400)
 	#parser.add_argument('--test_freq', type = int, default = 10)
-	parser.add_argument('--evaluate_only', action = 'store_false')
-	parser.add_argument('--ffnn_bias', action = 'store_true')
+	
+	parser.add_argument('--ffnn_bias', action = 'store_false')
+	parser.add_argument('--plot_pca', action = 'store_true')
+	parser.add_argument('--plot_tsne', type = int, default = 0)
 	parser.add_argument('--no_bias_at_inference', action = 'store_true')
 	parser.add_argument('--force_bias', type = int, default = 0)
+	parser.add_argument('--n_forces', type = int, default = 0)
+	parser.add_argument('--ic_tr_range', nargs="+", default =[-10, 10])
+	parser.add_argument('--ic_te_range', nargs="+", type = int, default =[-15, 15])
+	parser.add_argument('--exp_name', type = str, default = "")
+
+
+	#parser.add_argument('--', action = 'store_false')
+	parser.add_argument('--save', dest='save', action='store_true')
+	parser.add_argument('--no-save', dest='save', action='store_false')
+	parser.add_argument('--evaluate_only', dest = 'evaluate_only' ,action='store_true')
+	parser.set_defaults(save=True)
+
 	return parser
