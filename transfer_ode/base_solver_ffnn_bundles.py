@@ -540,7 +540,7 @@ def optimize(ic_train_range, ic_test_range):
     except:
         pass
 
-    filename = bp + "__num_bundles_"+  str(num_bundles) + "__num_forces_" + str(num_bundles)
+    filename = bp + "__num_bundles_"+  str(num_bundles) + "__num_forces_" + str(num_forces)
     exp_name = filename  + ".pt"
 
     #if args.viz:
@@ -710,25 +710,35 @@ def optimize(ic_train_range, ic_test_range):
     prediction_residuals = ((pred_y - true_ys) ** 2)
     #estimation_residuals = ((estim_ys - true_ys) ** 2)
     score = prediction_residuals.mean()
-    return score, pred_y, true_y, filename
+    return func.state_dict(), score, pred_y, true_y, filename
 
 
 if __name__ == "__main__":
-    score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
-    
-    if evaluate_only:
-        results = {"scores" : [], "pred_ys" : [], "true_ys" : []}
-        for i in range(10):
-            
-            score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
-            results["scores"].append(score)
-            results["pred_ys"].append(pred_y)
-            results["pred_ys"].append(true_y)
+    evaluate_only = False
+    #score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
 
-        with open(filename + '.pickle', 'wb') as f:
-            pickle.dump(results, f)
+    for n in [1, 2, 10, 100, 500, 1000]:
+        for ratio in [1, 2, 10]:
+            num_forces = max(n//ratio,1)
+            num_bundles = n
 
-        df2 = pd.read_pickle(filename + '.pickle')
-        print(df2)
+            print(f'{num_bundles/num_forces}')
+            #assert False, f'{num_bundles/num_forces}' 
+        
+            #if evaluate_only:
+            results = {"models" : [], "scores" : [], "pred_ys" : [], "true_ys" : []}
+            for i in range(10):
+                
+                model, score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
+                results["models"].append(model)
+                results["scores"].append(score)
+                results["pred_ys"].append(pred_y)
+                results["true_ys"].append(true_y)
 
-    
+            with open(filename + '.pickle', 'wb') as f:
+                pickle.dump(results, f)
+
+            df2 = pd.read_pickle(filename + '.pickle')
+            print(df2)
+
+        
