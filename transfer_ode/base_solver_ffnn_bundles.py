@@ -710,7 +710,7 @@ def optimize(ic_train_range, ic_test_range):
     prediction_residuals = ((pred_y - true_ys) ** 2)
     #estimation_residuals = ((estim_ys - true_ys) ** 2)
     score = prediction_residuals.mean()
-    return func.state_dict(), score, pred_y, true_y, filename
+    return func.state_dict(), score, pred_y, true_ys, filename
 
 
 if __name__ == "__main__":
