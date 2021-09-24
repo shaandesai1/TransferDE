@@ -15,14 +15,14 @@ import random
 
 parser = argparse.ArgumentParser('transfer demo')
 
-parser.add_argument('--tmax', type=float, default=6.)
+parser.add_argument('--tmax', type=float, default=10.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_bundles', type=int, default=10)
 parser.add_argument('--num_bundles_test', type=int, default=1000)
-parser.add_argument('--test_freq', type=int, default=100)
+parser.add_argument('--test_freq', type=int, default=200)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
@@ -49,6 +49,18 @@ def get_udot(y):
     yd = Amatrix @ y.t()
     return yd.t()
 
+class SiLU(nn.Module):
+    def __init__(self):
+        '''
+        Init method.
+        '''
+        super().__init__() # init the base class
+
+    def forward(self, input):
+        '''
+        Forward pass of the function.
+        '''
+        return torch.sin(input)
 
 class base_diffeq:
     """
@@ -96,10 +108,10 @@ class ODEFunc(nn.Module):
     def __init__(self, hidden_dim, output_dim):
         super(ODEFunc, self).__init__()
         self.hdim = hidden_dim
-        self.nl = nn.Tanh()
+        self.nl =  SiLU()
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
-        self.lout = nn.Linear(self.hdim, output_dim, bias=False)
+        self.lout = nn.Linear(self.hdim, output_dim, bias=True)
 
     def forward(self, t):
         x = self.h(t)
@@ -230,6 +242,9 @@ def visualize(pred_y,pred_yd, lst):
             # ax_traj.plot(t.detach().cpu().numpy(), true_y.cpu().numpy()[:, i],
             #              'g-')
             ax_traj.plot( pred_y.cpu().numpy()[:, i], pred_yd.cpu().numpy()[:, i])
+            ax_vecfield.plot(pred_y.cpu().numpy()[:,i])
+            ax_vecfield.plot(pred_yd.cpu().numpy()[:,i])
+
         ax_phase.set_yscale('log')
         ax_phase.plot(np.arange(len(lst)), lst)
 
@@ -281,28 +296,28 @@ if __name__ == '__main__':
     ii = 0
     NDIMZ = args.hidden_size
 
-    r2 = 2.5
-    r1 = 0.5
+    r2 = 1.5
+    r1 = -1.5
 
     #true_y0 = (r2 - r1) * torch.rand(2) + r1
     true_y0 = (r2 - r1) * torch.rand(100,2) + r1#torch.tensor([1.,1.]).reshape(1,2)
-    true_y0dot = (r2 - r1) * torch.rand(100,2) + r1#torch.tensor([1., 3.]).reshape(1, 2)
-    k1s = torch.linspace(1, 10, 100)
-    k2s = torch.linspace(1, 10, 100)
-    m1s = torch.linspace(1, 10, 100)
-    m2s = torch.linspace(1, 10, 100)
+    true_y0dot = torch.zeros(100,2)#(r2 - r1) * torch.rand(100,2) + r1#torch.tensor([1., 3.]).reshape(1, 2)
+    k1s = torch.linspace(0.5, 4.5, 100)#torch.ones(100)*0.5
+    k2s = torch.linspace(.5, 2.5, 100)
+    m1s = torch.linspace(1, 2, 100)
+    m2s = torch.linspace(1, 2, 100)
 
     indices = random.choices(np.arange(100),k=args.num_bundles)
-    print(indices)
+    # print(indices)
     y0s = true_y0[indices]
-    print(y0s)
+    # print(y0s)
     y0ds = true_y0dot[indices]
     k1sample = k1s[indices]
     k2sample = k2s[indices]
     m1sample = m1s[indices]
     m2sample = m2s[indices]
 
-    print(y0s,y0ds,k1sample,k2sample,m1sample,m2sample)
+    # print(y0s,y0ds,k1sample,k2sample,m1sample,m2sample)
 
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
@@ -328,18 +343,23 @@ if __name__ == '__main__':
             # add t0 to training times, including randomly generated ts
             t0 = torch.tensor([[0.]])
             t0.requires_grad = True
-            tv = args.tmax * torch.rand(int(args.tmax / args.dt)).reshape(-1, 1)
+            tv = args.tmax * torch.rand(int(args.tmax / args.dt))[:50].reshape(-1, 1)
             tv.requires_grad = True
             tv = torch.cat([t0, tv], 0)
             optimizer.zero_grad()
 
             # compute hwout,hdotwout
-            pred_y = func(tv)
-            pred_ydot = diff(pred_y,tv)
-            pred_yddot = diff(pred_ydot, tv,1)
 
+
+            pred_y = func(tv)
+            # print('a')
+            pred_ydot = diff(pred_y,tv)
+            # print('b')
+            pred_yddot = diff(pred_ydot, tv,1)
+            # print('c')
             # enforce diffeq
             loss_diffeq = (Mblock@pred_yddot.t()).t() + (Kblock@pred_y.t()).t()
+            # print('d')
             # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
             #     tv.detach()).reshape(-1, 1)
 
@@ -350,15 +370,16 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             loss_collector.append(torch.square(loss_diffeq).mean().item())
-            print(loss_collector[-1])
+            # print(loss_collector[-1])
             if itr % args.test_freq == 0:
+                print(itr)
                 func.eval()
                 pred_y = func(t)
                 pred_ydot = diff(pred_y,t)
                 pred_yddot = diff(pred_ydot, t)
 
 
-                visualize(pred_y.detach(),pred_ydot.detach(), loss_collector)
+                # visualize(pred_y.detach(),pred_ydot.detach(), loss_collector)
 
                 loss_diffeq = torch.mean(torch.square((Mblock @ pred_yddot.t()).t() + (Kblock @ pred_y.t()).t()))
 
@@ -385,6 +406,9 @@ if __name__ == '__main__':
     hd = hd.detach()
     hdd = hdd.detach()
 
+    h = torch.cat([h,torch.ones(len(h),1)],1)
+    hd = torch.cat([hd, torch.zeros(len(h), 1)], 1)
+    hdd = torch.cat([hdd, torch.zeros(len(h), 1)], 1)
     # plt.figure()
     #
     # plt.plot(h)
@@ -412,21 +436,25 @@ if __name__ == '__main__':
 
     s1 = time.time()
 
-    m1 = 10.
+    m1 = 1.
     m2 = 1.
-    k1 = 0.5
-    k2 = 0.5
+    k1 = 2.
+    k2 = 4.
 
-    r2 = 1.1
-    r1 = 0.1
+    r2 = 2.1
+    r1 = -2.1
 
-    plt.figure()
+    fig,ax = plt.subplots(1,2,figsize=(10,5))
     for i in range(100):
         # true_y0 = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)
-        true_y0 = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)#torch.tensor([1., 1.]).reshape(1, 2)
+        if i == 0:
+            true_y0 = torch.tensor([1.,0.]).reshape(1,2)#((r2 - r1) * torch.rand(2) + r1).reshape(1, 2)
+            # true_y0 = ((r2 - r1) * torch.rand(2) + r1).reshape(1, 2)
+        else:
+            true_y0 = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)#torch.tensor([1., 1.]).reshape(1, 2)
 
-        # true_y0dot = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)
-        true_y0dot =  ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)#torch.tensor([1., 3.]).reshape(1, 2)
+            # true_y0dot = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)
+        true_y0dot =  torch.tensor([0.,0.]).reshape(1,2)#((r2 - r1) * torch.rand(2) + r1).reshape(1,2)#torch.tensor([1., 3.]).reshape(1, 2)
 
 
         # m1 = torch.rand(1)
@@ -442,24 +470,26 @@ if __name__ == '__main__':
     # print(f'wout {wout.shape}')
     # woutn = wout.reshape(2,100)
     # wout = woutn.t()
-        nwout = torch.cat([wout[:args.hidden_size,0].reshape(-1,1),wout[args.hidden_size:,0].reshape(-1,1)],1)
+        nwout = torch.cat([wout[:args.hidden_size+1,0].reshape(-1,1),wout[args.hidden_size+1:,0].reshape(-1,1)],1)
 
 
     # print(wout)
         pred_y = h @ nwout
         pred_yd = hd @ nwout
 
-        if i < 10:
-            plt.plot(pred_y[:, 0], pred_yd[:, 0])
-            plt.plot(pred_y[:, 1], pred_yd[:, 1])
+        if i < 2:
+            ax[0].plot(pred_y[:, 0], pred_yd[:, 0])
+            ax[0].plot(pred_y[:, 1], pred_yd[:, 1])
+            ax[1].plot(pred_y[:, 0])
+            ax[1].plot(pred_y[:, 1])
 
-        plt.plot(pred_y[:,0],pred_yd[:,0],c='black',alpha=0.01)
-        plt.plot(pred_y[:, 1], pred_yd[:, 1], c='black',alpha=0.01)
-        # plt.plot(pred_y[:, 1], pred_yd[:, 1])
+        ax[0].plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.01)
+        ax[0].plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.01)
+        ax[1].plot(pred_y[:, 0],c='black',alpha=0.01)
+        ax[1].plot(pred_y[:, 1],c='black',alpha=0.01)
 
-    # plt.xlim([-5,5])
-    # plt.ylim([-5,5])
-    plt.show()
+
+    plt.savefig('beats_ics.pdf',dpi=2400,bbox_inches='tight')
     #
     #
     # pred_yddot = hdd@nwout

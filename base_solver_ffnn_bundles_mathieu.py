@@ -372,8 +372,8 @@ if __name__ == '__main__':
     # plt.plot(h)
     # plt.show()
 
-    alphas = torch.linspace(1.,2,50)
-    betas = torch.linspace(2, 5, 50)
+    alphas = torch.linspace(1.,2,100)
+    betas = torch.linspace(2, 5, 100)
     Alphas,Betas = torch.meshgrid(alphas,betas)
     new_Alphas = Alphas.ravel()
     new_Betas = Betas.ravel()
@@ -381,10 +381,10 @@ if __name__ == '__main__':
     ts = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     ts.requires_grad = True
 
-    tmax = torch.tensor([[np.pi]])
-    tmax.requires_grad = True
+    # tmax = torch.tensor([[np.pi]])
+    # tmax.requires_grad = True
 
-    t = torch.cat([ts,tmax],0)
+    # t = torch.cat([ts,tmax],0)
 
     h = func.h(t)
     hd = diff(h, t)
@@ -393,6 +393,11 @@ if __name__ == '__main__':
     hd = hd.detach()
     hdd = hdd.detach()
 
+    h = torch.cat([h,torch.ones(len(h),1)],1)
+
+    hd = torch.cat([hd,torch.zeros(len(hd),1)],1)
+
+    hdd = torch.cat([hdd,torch.zeros(len(hdd),1)],1)
 
     f_train = []
     a1_train = []
@@ -404,9 +409,9 @@ if __name__ == '__main__':
 
     # print(new_Alphas)
     # print(new_Betas)
-    # plt.figure()
+    plt.figure()
     binary_vars = []
-    epsilon = 1e-3
+    epsilon = 1e-1
 
     for i in range(len(new_Betas)):
         a0_train = [lambda z: 0*z]
@@ -416,13 +421,13 @@ if __name__ == '__main__':
         pred_y = h @ wout
 
         # print(pred_y)
-        if (torch.abs(pred_y[-1,0])-1.)>epsilon or ((torch.abs(pred_y[0,0])-1.)>epsilon):
+        if (torch.abs(pred_y[-1,0])-1.)>epsilon: #or ((torch.abs(pred_y[0,0])-1.)>epsilon):
             binary_vars.append(0)
         else:
             binary_vars.append(1)
-        # plt.plot(pred_y)
+        plt.plot(pred_y)
     # plt.yscale('log')
-    # plt.show()
+    plt.show()
 
     binary_vars = torch.tensor(binary_vars)
     plt.figure()

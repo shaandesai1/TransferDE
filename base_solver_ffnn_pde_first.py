@@ -25,65 +25,7 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
-from torchdiffeq import odeint_adjoint as odeint
 
-
-class diffeq(nn.Module):
-    """
-    defines the diffeq of interest
-    """
-
-    def __init__(self, a0, a1, f):
-        super().__init__()
-        self.a1 = a1
-        self.a0 = a0
-        self.f = f
-
-    # return ydot
-    def forward(self, t, states):
-        # print(y.shape)
-        y = states[:, 0].reshape(-1,1)
-        yd = states[:,1].reshape(-1,1)
-        ydd = (-self.a1(t) * yd -self.a0(t)*y + self.f(t)).reshape(-1,1)
-        return torch.cat([yd,ydd],1)
-
-
-class base_diffeq:
-    """
-    integrates base_solver given y0 and time
-    """
-
-    def __init__(self, base_solver):
-        self.base = base_solver
-
-    def get_solution(self, true_y0, t):
-        with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='dopri5')
-        return true_y
-
-    def get_deriv(self, true_y0, t):
-        with torch.no_grad():
-            true_ydot = self.base(t, true_y0)
-        return true_ydot
-
-
-class estim_diffeq:
-    """
-    integrates base_solver given y0 and time
-    """
-
-    def __init__(self, base_solver):
-        self.base = base_solver
-
-    def get_solution(self, true_y0, t):
-        with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='midpoint')
-        return true_y
-
-    def get_deriv(self, true_y0, t):
-        with torch.no_grad():
-            true_ydot = self.base(t, true_y0)
-        return true_ydot
 
 class SiLU(nn.Module):
     def __init__(self):
@@ -111,7 +53,7 @@ class ODEFunc(nn.Module):
         self.lin2 = nn.Linear(self.hdim, self.hdim)
         # self.lin3 = nn.Linear(self.hdim, self.hdim)
 
-        self.lout = nn.Linear(self.hdim, output_dim, bias=False)
+        self.lout = nn.Linear(self.hdim, output_dim, bias=True)
 
     def hidden_states(self, t,x):
         inputs_ = torch.cat([t.reshape(-1,1),x.reshape(-1,1)],1)
@@ -136,13 +78,6 @@ def diff(u, t, order=1):
     While there's no requirement for shapes, errors could occur in some cases.
     See `this issue <https://github.com/NeuroDiffGym/neurodiffeq/issues/63#issue-719436650>`_ for details
     :param u: The :math:`u` in :math:`\displaystyle\frac{\partial u}{\partial t}`.
-    :type u: `torch.Tensor`
-    :param t: The :math:`t` in :math:`\displaystyle\frac{\partial u}{\partial t}`.
-    :type t: `torch.Tensor`
-    :param order: The order of the derivative, defaults to 1.
-    :type order: int
-    :returns: The derivative evaluated at ``t``.
-    :rtype: `torch.Tensor`
     """
     # ones = torch.ones_like(u)
 

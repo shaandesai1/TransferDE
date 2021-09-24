@@ -20,10 +20,10 @@ parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--bs', type=int, default=100)
 
-parser.add_argument('--viz', action='store_true')
+parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
-import matplotlib.pyplot as plt
+parser.add_argument('--evaluate_only', action='store_true')
+
 args = parser.parse_args()
 from torchdiffeq import odeint_adjoint as odeint
 
@@ -51,22 +51,22 @@ class ODEFunc(nn.Module):
         super(ODEFunc, self).__init__()
         self.hdim = hidden_dim
         self.nl = nn.Tanh()
-        self.lin1 = nn.Linear(2, self.hdim)
+        self.lin1 = nn.Linear(3, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
         # self.lin3 = nn.Linear(self.hdim, self.hdim)
 
-        self.lout = nn.Linear(self.hdim, output_dim, bias=True)
+        self.lout = nn.Linear(self.hdim, output_dim, bias=False)
 
-    def hidden_states(self, t,x):
-        inputs_ = torch.cat([t.reshape(-1,1),x.reshape(-1,1)],1)
+    def hidden_states(self, t,x,y):
+        inputs_ = torch.cat([t.reshape(-1,1),x.reshape(-1,1),y.reshape(-1,1)],1)
         u = self.lin1(inputs_)
         u = self.nl(u)
         u = self.lin2(u)
         u = self.nl(u)
         return u
 
-    def forward(self, t,x):
-        u = self.hidden_states(t,x)
+    def forward(self, t,x,y):
+        u = self.hidden_states(t.reshape(-1,1),x.reshape(-1,1),y.reshape(-1,1))
         u = self.lout(u)
         return u
 
@@ -127,55 +127,46 @@ class Transformer_Analytic(nn.Module):
     returns Wout analytic, need to define the parameter coefficients
     """
 
-    def __init__(self,bb,tb,lbc,rbc,rho):
+    def __init__(self,bb,tb,lbc,rbc,c,rho):
         super(Transformer_Analytic, self).__init__()
         self.bb = bb
         self.tb = tb
         self.lbc = lbc
         self.rbc = rbc
+        self.c = c
         self.rho = rho
         # self.lambda_ = lambda_
 
-
-    def append_ones(self,var,type='ones'):
-
-        if type == 'ones':
-            return torch.cat([var,torch.ones(len(var),1)],1)
-
-        else:
-            return torch.cat([var,torch.zeros(len(var),1)],1)
     def get_wout(self, func,t,x,grid_t,grid_x):
 
         # print('enter wout')
         # s1=time.time()
         H = func.hidden_states(t,x)
-        d2Hdt2 = torch.cat([diff(H,t,2),torch.ones(len(H),1)],1)
-        d2Hdx2 = torch.cat([diff(H,x,2),torch.ones(len(H),1)],1)
-
-
         # s2 = time.time()
         # print(s2-s1)
-        rho = self.rho(t,x)
+        d2Hdt2 = diff(H,t,2)
+        d2Hdx2 = diff(H,x,2)
+        # s2 = time.time()
+        # print(s2-s1)
+        # rho = self.rho(t,x)
 
-        DH = (d2Hdt2+d2Hdx2)
+
+        rhos = self.rho(t,x)
+
+        DH = (d2Hdt2-self.c*d2Hdx2)
 
         H0 = func.hidden_states(grid_t[:,0].reshape(-1,1),grid_x[:,0].reshape(-1,1))
-        H0 = self.append_ones(H0)
-
         HT = func.hidden_states(grid_t[:, -1].reshape(-1, 1), grid_x[:, -1].reshape(-1, 1))
-        HT = self.append_ones(HT)
 
         HL = func.hidden_states(grid_t[0,:].reshape(-1,1),grid_x[0,:].reshape(-1,1))
-        HL = self.append_ones(HL)
         HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), grid_x[-1, :].reshape(-1, 1))
-        HR = self.append_ones(HR)
 
         BB = self.bb(grid_x[:,0]).reshape(-1,1)
         TB = self.tb(grid_x[:, -1]).reshape(-1, 1)
         BL = self.lbc(grid_t[0,:]).reshape(-1,1)
         BR = self.rbc(grid_t[-1,:]).reshape(-1,1)
 
-        W0 = torch.linalg.solve(DH.t() @ DH  + H0.t()@H0 +HT.t()@HT + HL.t()@HL+HR.t()@HR, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        W0 = torch.linalg.solve(DH.t() @ DH  + H0.t()@H0 +HT.t()@HT + HL.t()@HL+HR.t()@HR,DH.t()@rhos+ H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
         return W0,d2Hdt2,d2Hdx2
 
 
@@ -190,14 +181,28 @@ if args.viz:
     plt.show(block=False)
 
 
-def visualize(u,t,x,grid_t,grid_x,lst):
+def visualize(u,t,x,y,lst):
+    #u_eval,t_evals,x_evals,y_evals,grid_t,grid_x,grid_y, loss_collecto
     if args.viz:
         ax_traj.cla()
         ax_phase.cla()
-        ax_traj.contourf(x,t,u[:,0].reshape(len(x),len(t)).t())
+        nx = x[:, :, 0]
+        ny = y[:,:,0]
+        print(nx.shape)
+        uhat_t0 = func(torch.zeros_like(nx),nx,ny)
+        print(uhat_t0.shape)
+        # print(uhat_t0.shape)
+        ax_traj.contourf(nx,ny,uhat_t0.reshape(50,50))
+
+        uhat_t1 = func(1*torch.ones_like(nx),nx,ny)
+        ax_phase.contourf(nx,ny,uhat_t1.reshape(50,50))
+
+        uhat_t2 = func(2 * torch.ones_like(nx), nx, ny)
+        ax_vecfield.contourf(nx, ny, uhat_t2.reshape(50,50))
+
         # u_true = torch.sin(grid_x)*torch.exp(-grid_t)
-        ax_phase.contourf(x,t,u[:,1].reshape(len(x),len(t)).t())
-        ax_vecfield.contourf(x, t, u[:, 2].reshape(len(x), len(t)).t())
+        # ax_phase.contourf(x,t,u[:,1].reshape(len(x),len(t)).t())
+        # ax_vecfield.contourf(x, t, u[:, 2].reshape(len(x), len(t)).t())
 
         # ax_vecfield.contourf(x, t, (u_true.reshape(len(x), len(t)).t()-u.reshape(len(x),len(t)).t())**2)
         ax_traj.legend()
@@ -222,38 +227,53 @@ def get_rho(t,x,A,tmid,xmid,sigma_X,sigma_Y,theta):
     # plt.contour(X, Y, Z);
 
 
+def get_object(x,y,xmid,ymid,radius=1):
+    radius = 1.
+    bool_check = (x-xmid)**2 + (y-ymid)**2 >radius**2
+    nbool = bool_check*2.
+    nbool[nbool==0] = 1.
+    return nbool
+
+
+
+
 if __name__ == '__main__':
 
     ii = 0
     NDIMZ = args.hidden_size
-    xl = -3
-    xr = 3#torch.tensor(np.pi)
-    t0 = -3
-    tmax = 3#torch.tensor(np.pi)
-    x_evals = torch.linspace(xl,xr,50)
-    y_evals = torch.linspace(t0,tmax,50)
-    grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
+
+
+    xl = 0
+    xr = 3
+
+    yb = 0
+    yt = 5
+
+    t0 = 0
+    tmax = 2
+
+    num_xs = 50
+    num_ys = 50
+    num_ts = 50
+
+    x_evals = torch.linspace(xl,xr,num_xs)
+    y_evals = torch.linspace(yb,yt,num_ys)
+    t_evals = torch.linspace(t0,tmax,num_ts)
+
+
+    grid_x,grid_y, grid_t = torch.meshgrid(x_evals, y_evals,t_evals)
+
     grid_x.requires_grad = True
+    grid_y.requires_grad = True
     grid_t.requires_grad = True
 
-    # print(grid_t[:,0], grid_x[:,0])
+    xtrain_vec = grid_x.ravel()
+    ytrain_vec = grid_y.ravel()
+    ttrain_vec = grid_t.ravel()
 
-    grid_x = grid_x.ravel()
-    grid_t = grid_t.ravel()
+    total_points = len(grid_x.ravel())
 
-
-    # left BC
-    bc_left = torch.ones(50)*xl
-    bc_right = torch.ones(50)*xr
-    ic_t0 = torch.ones(50)*t0
-    ic_tmax = torch.ones(50)*tmax
-
-    bc_left.requires_grad=True
-    bc_right.requires_grad=True
-    ic_t0.requires_grad=True
-    ic_tmax.requires_grad=True
-    # wout_gen = Transformer_Analytic()
-    func = ODEFunc(hidden_dim=NDIMZ,output_dim=3)
+    func = ODEFunc(hidden_dim=NDIMZ,output_dim=1)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
@@ -263,33 +283,36 @@ if __name__ == '__main__':
 
         for itr in range(1, args.niters + 1):
             func.train()
-            indices = torch.tensor(np.random.choice(len(grid_x),1000))
-            x_tr = (grid_x[indices]).reshape(-1,1)
-            t_tr = (grid_t[indices]).reshape(-1,1)
+            indices = torch.tensor(np.random.choice(total_points,500))
+            x_tr = (xtrain_vec[indices]).reshape(-1,1)
+            y_tr = (ytrain_vec[indices]).reshape(-1,1)
+            t_tr = (ttrain_vec[indices]).reshape(-1, 1)
 
             # add t0 to training times, including randomly generated ts
             optimizer.zero_grad()
 
-            u = func(t_tr,x_tr)
-            d2udt2 = diff(u,t_tr,2)
-            d2udx2 = diff(u, x_tr, 2)
+            u = func(t_tr,x_tr,y_tr)
 
-            rho1 = get_rho(t_tr,x_tr,A=10,tmid=0,xmid=0,sigma_X=0.1,sigma_Y=0.1,theta=0)
-            rho2 = get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=1, theta=0)
-            rho3 = get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=1, sigma_Y=0.1, theta=0)
+            utt = diff(u,t_tr,2)
+            uxx = diff(u, x_tr, 2)
+            uyy = diff(u, y_tr, 2)
 
-            rhos = torch.cat([rho1,rho2,rho3],1)
+            c = get_object(x_tr,y_tr,xmid=1.5,ymid=2.5).reshape(-1,1)
+            rho1 = 0#get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=0.1, theta=0)
 
+            loss_diffeq = torch.mean((utt-c*uxx-c*uyy)**2)
 
-            loss_diffeq = torch.mean((d2udt2 + d2udx2-rhos)**2)
+            u_t0 = ((func(grid_t[:,:,0],grid_x[:,:,0],grid_y[:,:,0]) - 0)**2).mean()
+            u_tmax = ((func(grid_t[:,:,-1],grid_x[:,:,-1],grid_y[:,:,-1]) - 0)**2).mean()
 
-            u_t0 = torch.mean((func(ic_t0,x_evals.reshape(-1,1)).ravel() - 0)**2)
-            u_tmax = torch.mean((func(ic_tmax, x_evals.reshape(-1, 1)).ravel() - 0) ** 2)
-            u_left = torch.mean((func(y_evals.reshape(-1,1),bc_left.reshape(-1,1)) - 0) ** 2)
-            u_right = torch.mean((func(y_evals.reshape(-1, 1), bc_right.reshape(-1,1)) - 0) ** 2)
+            u_left = ((func(grid_t[0,:,:],grid_x[0,:,:],grid_y[0,:,:]) - 1.)**2).mean()
+            u_right = ((func(grid_t[-1,:,:],grid_x[-1,:,:],grid_y[-1,:,:]) - 0)**2).mean()
+
+            u_bottom = ((func(grid_t[:,0,:],grid_x[:,0,:],grid_y[:,0,:]) - 0)**2).mean()
+            u_top = ((func(grid_t[:,-1,:],grid_x[:,-1,:],grid_y[:,-1,:]) - 0)**2).mean()
 
             #enforce initial conditions
-            loss_ics = u_t0 +u_tmax + u_left + u_right
+            loss_ics = u_t0 +u_tmax + u_left + u_right + u_bottom + u_top
             loss = loss_diffeq + loss_ics
             loss.backward()
             optimizer.step()
@@ -298,25 +321,26 @@ if __name__ == '__main__':
                 with torch.no_grad():
                     func.eval()
                     print(f'diffeq: {loss_collector[-1]}, bcs: {loss_ics.item()}')
-                    u_eval = func(grid_t.reshape(-1,1),grid_x.reshape(-1,1))
+                    # u_eval = func(grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_y.reshape(-1,1))
                     # s, _,_ = compute_s_sdot(func, t)
                     # pred_y = s.detach()
                     # pred_y = pred_y.reshape(-1, args.num_ics, 1)
-                    visualize(u_eval,y_evals,x_evals,grid_t,grid_x, loss_collector)
+                    visualize(func,grid_t,grid_x,grid_y, loss_collector)
                 # ii += 1
 
-        torch.save(func.state_dict(), 'func_ffnn_poisson')
+        torch.save(func.state_dict(), 'func_ffnn_wave')
 
     # with torch.no_grad():
-    rho = lambda v1,v2: get_rho(v1,v2,A=5.,tmid=0,xmid=0,sigma_X=.1,sigma_Y=1.,theta=45)#4+v1*0+v2*0#torch.sin(v1)*torch.cos(v2)
+    # rho = lambda v1,v2: get_rho(v1,v2,A=10,tmid=0,xmid=0,sigma_X=.1,sigma_Y=.5,theta=45)#4+v1*0+v2*0#torch.sin(v1)*torch.cos(v2)
     ft = lambda t: 0*t#3*torch.sin(t)
     fb = lambda t: 0*t#torch.sin(t)
     lbc = lambda t: 0*t#torch.sin(t)
     rbc = lambda t: 0*t#torch.cos(t)
+    rho1 = get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=0.1, theta=0)
 
-    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,rho)
+    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,3,rho1)
 
-    func.load_state_dict(torch.load('func_ffnn_poisson'))
+    func.load_state_dict(torch.load('func_ffnn_wave'))
     func.eval()
 
     x_evals = torch.linspace(xl, xr, 50)
@@ -335,7 +359,6 @@ if __name__ == '__main__':
     WOUT,Htt,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,)
 
     H = func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1))
-    H = torch.cat([H,torch.ones(len(H),1)],1)
 
     # Htt = diff(H,grid_tt.reshape(-1,1),2)
     # Hxx = diff(H,grid_xx.reshape(-1,1),2)
@@ -352,13 +375,13 @@ if __name__ == '__main__':
         ax[0].set_title('predicted solution')
         fig.colorbar(pc, ax=ax[0])
 
-        # u_true = 3*torch.sin(grid_xx) * torch.exp(-grid_tt)
-        #
-        # ax[1].contourf(x_evals, y_evals, u_true.reshape(len(x_evals), len(y_evals)).t())
-        # ax[1].set_title('true solution')
-        #
-        # pc = ax[2].contourf(x_evals, y_evals, (u_true.reshape(len(x_evals), len(y_evals)).t() - out_pred.reshape(len(x_evals), len(y_evals)).t()) ** 2)
-        # ax[2].set_title('residuals')
-        # fig.colorbar(pc, ax=ax[2])
+        u_true = 3*torch.sin(grid_xx) * torch.exp(-grid_tt)
+
+        ax[1].contourf(x_evals, y_evals, u_true.reshape(len(x_evals), len(y_evals)).t())
+        ax[1].set_title('true solution')
+
+        pc = ax[2].contourf(x_evals, y_evals, (u_true.reshape(len(x_evals), len(y_evals)).t() - out_pred.reshape(len(x_evals), len(y_evals)).t()) ** 2)
+        ax[2].set_title('residuals')
+        fig.colorbar(pc, ax=ax[2])
 
         plt.show()

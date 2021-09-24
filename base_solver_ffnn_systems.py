@@ -209,10 +209,9 @@ def get_wout(s, sd,sdd, y0,y0dot,m1,m2,k1,k2, t):
     #
     # W0 = torch.linalg.solve(torch.matmul(torch.transpose(DH,1,2), DH) + torch.matmul(h0m, torch.transpose(h0m,1,2)), torch.matmul(h0m,y0[0,:].reshape(2,1,1)) )
     # return W0
-
-
+import matplotlib.pyplot as plt
 if args.viz:
-    import matplotlib.pyplot as plt
+
 
     fig = plt.figure(figsize=(12, 4), facecolor='white')
     ax_traj = fig.add_subplot(131, frameon=False)
@@ -345,12 +344,20 @@ if __name__ == '__main__':
     func.load_state_dict(torch.load('func_ffnn_systems_coupled'))
     func.eval()
 
+
     h = func.h(t)
     hd = diff(h, t)
     hdd = diff(hd,t)
     h = h.detach()
     hd = hd.detach()
     hdd = hdd.detach()
+
+    plt.figure()
+
+    plt.plot(h)
+    plt.show()
+
+
 
     gz_np = h.detach().numpy()
     T = np.linspace(0, 1, len(gz_np)) ** 2

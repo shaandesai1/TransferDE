@@ -21,11 +21,11 @@ parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=200)
-parser.add_argument('--num_bundles', type=int, default=100)
+parser.add_argument('--hidden_size', type=int, default=100)
+parser.add_argument('--num_bundles', type=int, default=20)
 parser.add_argument('--num_bundles_test', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
-parser.add_argument('--viz', action='store_true')
+parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
@@ -115,7 +115,7 @@ class ODEFunc(nn.Module):
         self.nl = nn.Tanh()
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
-        self.lout = nn.Linear(self.hdim, output_dim, bias=True)
+        self.lout = nn.Linear(self.hdim, output_dim, bias=False)
 
     def forward(self, t):
         x = self.h(t)
@@ -216,7 +216,6 @@ def get_wout(s, sd, y0, t,a0s,fs):
     # W0 = torch.linalg.solve(DH.t() @ DH + lambda_0 + h0m @ h0m.t(), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
     # return W0
 
-import matplotlib.pyplot as plt
 
 if args.viz:
     import matplotlib.pyplot as plt
@@ -258,8 +257,8 @@ if __name__ == '__main__':
     # each column of Wouts defines a solution thus, each tuple defines a solution too
 
 
-    f_train = [lambda t: torch.cos(t),lambda t: torch.sin(t),lambda t: 0*t]
-    a0_train = [lambda t: t,lambda t:t**2, lambda t: 0*t]
+    f_train = [lambda t: torch.cos(t),lambda t: torch.sin(t)]
+    a0_train = [lambda t: t,lambda t:t**2]
     r1 = -5.
     r2 = 5.
     true_y0 = (r2 - r1) * torch.rand(100) + r1
@@ -282,11 +281,9 @@ if __name__ == '__main__':
     # instantiate wout with coefficients
     func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles)
 
-    optimizer = optim.Adam(func.parameters(), lr=1e-3)
+    optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
 
     loss_collector = []
-
-    best_residual = 1e-3
 
     if not args.evaluate_only:
 
@@ -319,24 +316,12 @@ if __name__ == '__main__':
             loss_collector.append(torch.square(loss_diffeq).mean().item())
             if itr % args.test_freq == 0:
                 func.eval()
-                pred_y = func(t)
-                pred_ydot = diff(pred_y,t)
-
-                pred_y = pred_y.detach()
-                pred_ydot = pred_ydot.detach()
-
-                # pred_y = pred_y.reshape(-1, args.num_bundles)
+                pred_y = func(t).detach()
+                pred_y = pred_y.reshape(-1, args.num_bundles)
                 visualize(true_y.detach(), pred_y.detach(), loss_collector)
                 ii += 1
 
-                current_residual = torch.mean((pred_ydot - get_udot(t,pred_y,a0_samples,f_samples))**2)
-                print(current_residual.item())
-                if current_residual < best_residual:
-
-                    torch.save(func.state_dict(), 'func_ffnn_bundles')
-                    best_residual = current_residual
-                    print(itr,best_residual.item())
-        # torch.save(func.state_dict(), 'func_ffnn_bundles')
+        torch.save(func.state_dict(), 'func_ffnn_bundles')
 
     # with torch.no_grad():
 
@@ -367,14 +352,6 @@ if __name__ == '__main__':
     h = h.detach()
     hd = hd.detach()
 
-
-    plt.figure()
-
-    plt.plot(h)
-    plt.show()
-
-
-
     gz_np = h.detach().numpy()
     T = np.linspace(0, 1, len(gz_np)) ** 2
     new_hiddens = scaler.fit_transform(gz_np)
@@ -382,18 +359,15 @@ if __name__ == '__main__':
     pca_comps = pca.fit_transform(new_hiddens)
 
     fig = plt.figure()
-    # ax = plt.axes(projection='3d')
+    ax = plt.axes(projection='3d')
 
     if pca_comps.shape[1] >= 2:
         s = 10  # Segment length
         for i in range(0, len(gz_np) - s, s):
-            plt.plot(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1])
-        # s = 10  # Segment length
-        # for i in range(0, len(gz_np) - s, s):
-        #     ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
-        #               color=(0.1, 0.8, T[i]))
-        #     plt.xlabel('comp1')
-        #     plt.ylabel('comp2')
+            ax.plot3D(pca_comps[i:i + s + 1, 0], pca_comps[i:i + s + 1, 1], pca_comps[i:i + s + 1, 2],
+                      color=(0.1, 0.8, T[i]))
+            plt.xlabel('comp1')
+            plt.ylabel('comp2')
 
 
     s1 = time.time()
