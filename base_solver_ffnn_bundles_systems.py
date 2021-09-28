@@ -12,11 +12,12 @@ from sklearn.preprocessing import MinMaxScaler
 from torchdiffeq import odeint_adjoint as odeint
 from mpl_toolkits.mplot3d import Axes3D
 import random
+import seaborn as sns
 
 parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=10.)
-parser.add_argument('--dt', type=int, default=0.1)
+parser.add_argument('--dt', type=int, default=0.01)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
@@ -176,7 +177,7 @@ def get_wout(s, sd,sdd, y0,y0dot,m1,m2,k1,k2, t):
 
     Amatrix = torch.linalg.inv(Lmat)@Rmat
 
-    y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
+    # y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
     hddothat = torch.block_diag(sdd,sdd)
     hdothat = torch.block_diag(sd,sd)
@@ -303,7 +304,7 @@ if __name__ == '__main__':
     true_y0 = (r2 - r1) * torch.rand(100,2) + r1#torch.tensor([1.,1.]).reshape(1,2)
     true_y0dot = torch.zeros(100,2)#(r2 - r1) * torch.rand(100,2) + r1#torch.tensor([1., 3.]).reshape(1, 2)
     k1s = torch.linspace(0.5, 4.5, 100)#torch.ones(100)*0.5
-    k2s = torch.linspace(.5, 2.5, 100)
+    k2s = torch.linspace(.5, 4.5, 100)
     m1s = torch.linspace(1, 2, 100)
     m2s = torch.linspace(1, 2, 100)
 
@@ -372,7 +373,7 @@ if __name__ == '__main__':
             loss_collector.append(torch.square(loss_diffeq).mean().item())
             # print(loss_collector[-1])
             if itr % args.test_freq == 0:
-                print(itr)
+
                 func.eval()
                 pred_y = func(t)
                 pred_ydot = diff(pred_y,t)
@@ -382,7 +383,7 @@ if __name__ == '__main__':
                 # visualize(pred_y.detach(),pred_ydot.detach(), loss_collector)
 
                 loss_diffeq = torch.mean(torch.square((Mblock @ pred_yddot.t()).t() + (Kblock @ pred_y.t()).t()))
-
+                print(itr,loss_diffeq.item())
                 if loss_diffeq.item() < best_residual:
                     torch.save(func.state_dict(), 'func_ffnn_systems_coupled')
                     best_residual = loss_diffeq.item()
@@ -436,16 +437,35 @@ if __name__ == '__main__':
 
     s1 = time.time()
 
-    m1 = 1.
-    m2 = 1.
-    k1 = 2.
-    k2 = 4.
+    m1 = torch.tensor(1.)
+    m2 = torch.tensor(1.)
+    k1 = torch.tensor(2.)
+    k2 = torch.tensor(4.)
 
-    r2 = 2.1
-    r1 = -2.1
+    r2 = 1.5
+    r1 = -1.5
 
-    fig,ax = plt.subplots(1,2,figsize=(10,5))
-    for i in range(100):
+
+
+    Mblock = get_block_m(m1, m2)
+    Kblock = get_block_k(k1, k2)
+
+    # print(Mblock)
+
+    sns.axes_style(style='ticks')
+    sns.set_context("paper", font_scale=2,
+                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                        'lines.linewidth': 2})
+    sns.set_palette('deep')
+
+
+    losses = []
+    #
+    pred_ys = []
+    pred_yds = []
+
+    # fig,ax = plt.subplots(3,1,figsize=(10,5))
+    for i in range(50):
         # true_y0 = ((r2 - r1) * torch.rand(2) + r1).reshape(1,2)
         if i == 0:
             true_y0 = torch.tensor([1.,0.]).reshape(1,2)#((r2 - r1) * torch.rand(2) + r1).reshape(1, 2)
@@ -462,66 +482,137 @@ if __name__ == '__main__':
         # k1 = torch.rand(1)
         # k2 = torch.rand(1)
 
+        with torch.no_grad():
+
+            wout = get_wout(h, hd,hdd, true_y0,true_y0dot,m1,m2,k1,k2, t.detach())
+
+        # print(wout)
+        # print(f'wout {wout.shape}')
+        # woutn = wout.reshape(2,100)
+        # wout = woutn.t()
+            nwout = torch.cat([wout[:args.hidden_size+1,0].reshape(-1,1),wout[args.hidden_size+1:,0].reshape(-1,1)],1)
 
 
-        wout = get_wout(h, hd,hdd, true_y0,true_y0dot,m1,m2,k1,k2, t.detach())
+        # print(wout)
+            pred_y = h @ nwout
+            pred_yd = hd @ nwout
+            pred_yddot = hdd @ nwout
 
-    # print(wout)
-    # print(f'wout {wout.shape}')
-    # woutn = wout.reshape(2,100)
-    # wout = woutn.t()
-        nwout = torch.cat([wout[:args.hidden_size+1,0].reshape(-1,1),wout[args.hidden_size+1:,0].reshape(-1,1)],1)
+            loss_diffeq = (Mblock @ pred_yddot.t()).t() + (Kblock @ pred_y.t()).t()
+
+        pred_ys.append(pred_y)
+        pred_yds.append(pred_yd)
+    # print(loss_diffeq)
+        losses.append((loss_diffeq**2).mean(1))
+
+    f, (a0) = plt.subplots(1,1, figsize=(5, 5))
+
+    for i,(pred_y,pred_yd) in enumerate(zip(pred_ys,pred_yds)):
+        if i ==0:
+            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='green',label=r'$x_1$')
+            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='royalblue',label=r'$x_2$')
+            # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 0],c='green')
+            # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 1],c='royalblue')
+
+        else:
+            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.05)
+            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.05)
+
+            # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 0], c='black', alpha=0.05)
+            # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 1], c='black', alpha=0.05)
+
+        a0.set_xlabel(r'$z$')
+        a0.set_ylabel(r'$\dot{z}$')
+
+        # a1.set_ylabel(r'$z$')
+        # print(losses)
+        # a1.set_xticks([])
+        # a1.set_xticks([])
+
+        # losses = torch.stack(losses,1)
+        # a2.set_yscale('log')
+        # a2.plot(np.arange(len(losses))*args.dt,(losses).mean(1),c='royalblue')
+        # a2.set_ylabel('residuals')
+        # a2.set_xlabel(r'$t$')
+
+        # a1.get_shared_x_axes().join(a1,a2)
+        # a2.sharex(a1)
+        plt.legend()
+        plt.tight_layout()
+
+        # plt.tight_layout()
+        plt.savefig('beats_ics_1.pdf',dpi=2400,bbox_inches='tight')
+
+    f, (a1, a2) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [3, 1]}, figsize=(6, 6), sharex=True)
 
 
-    # print(wout)
-        pred_y = h @ nwout
-        pred_yd = hd @ nwout
+    for i,(pred_y, pred_yd) in enumerate(zip(pred_ys, pred_yds)):
+        if i == 0:
+            # a0.plot(pred_y[:, 0], pred_yd[:, 0],c='green',label=r'$x_1$')
+            # a0.plot(pred_y[:, 1], pred_yd[:, 1],c='royalblue',label=r'$x_2$')
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='green')
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='royalblue')
 
-        if i < 2:
-            ax[0].plot(pred_y[:, 0], pred_yd[:, 0])
-            ax[0].plot(pred_y[:, 1], pred_yd[:, 1])
-            ax[1].plot(pred_y[:, 0])
-            ax[1].plot(pred_y[:, 1])
+        else:
+            # a0.plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.05)
+            # a0.plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.05)
 
-        ax[0].plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.01)
-        ax[0].plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.01)
-        ax[1].plot(pred_y[:, 0],c='black',alpha=0.01)
-        ax[1].plot(pred_y[:, 1],c='black',alpha=0.01)
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='black', alpha=0.05)
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='black', alpha=0.05)
 
+        # a0.set_xlabel(r'$z$')
+        # a0.set_ylabel(r'$\dot{z}$')
 
-    plt.savefig('beats_ics.pdf',dpi=2400,bbox_inches='tight')
+    a1.set_ylabel(r'$z$')
+        # print(losses)
+        # a1.set_xticks([])
+        # a1.set_xticks([])
+
+    losses = torch.stack(losses, 1)
+    a2.set_yscale('log')
+    a2.plot(np.arange(len(losses)) * args.dt, losses.mean(1), c='royalblue')
+    a2.set_ylabel('residuals')
+    a2.set_xlabel(r'$t$')
+
+        # a1.get_shared_x_axes().join(a1,a2)
+        # a2.sharex(a1)
+    plt.legend()
+    plt.tight_layout()
+
+    plt.tight_layout()
+    plt.savefig('beats_ics_2.pdf', dpi=2400, bbox_inches='tight')
     #
-    #
-    # pred_yddot = hdd@nwout
-    # print('final loss')
-    # print(((get_m(pred_yddot,m1,m2)+get_k(pred_y,k1,k2))**2).mean())
-    #
-    # # print(f'predy:{pred_y}')
-    # s2 = time.time()
-    # print(f'all_ics:{s2 - s1}')
-    # # print(pred_y)
-    # s1 = time.time()
-    # true_ys = (gt_generator.get_solution(true_y0, t.ravel())).reshape(-1, 2)
-    # s2 = time.time()
-    # print(f'gt_ics:{s2 - s1}')
-    #
-    # # print(true_ys.shape,pred_y.shape)
-    #
-    # # s1 = time.time()
-    # # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
-    # # estim_ys = true_y.reshape(len(pred_y), ics.shape[1])
-    # # s2 = time.time()
-    # # print(f'estim_ics:{s2 - s1}')
-    #
-    # # print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
-    # # print(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
-    #
-    # fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    # # print(true_ys[0,:])
-    # for i in range(0,2):
-    #     # ax[0].plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i], c='blue', linestyle='dashed')
-    #     ax[0].plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], c='orange')
-    #     # plt.draw()
+        #
+        # pred_yddot = hdd@nwout
+        # print('final loss')
+        # print(((get_m(pred_yddot,m1,m2)+get_k(pred_y,k1,k2))**2).mean())
+        #
+        # # print(f'predy:{pred_y}')
+        # s2 = time.time()
+        # print(f'all_ics:{s2 - s1}')
+        # # print(pred_y)
+        # s1 = time.time()
+        # true_ys = (gt_generator.get_solution(true_y0, t.ravel())).reshape(-1, 2)
+        # s2 = time.time()
+        # print(f'gt_ics:{s2 - s1}')
+        #
+        # # print(true_ys.shape,pred_y.shape)
+        #
+        # # s1 = time.time()
+        # # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
+        # # estim_ys = true_y.reshape(len(pred_y), ics.shape[1])
+        # # s2 = time.time()
+        # # print(f'estim_ics:{s2 - s1}')
+        #
+        # # print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
+        # # print(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
+        #
+        # fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        # # print(true_ys[0,:])
+        # for i in range(0,2):
+        #     # ax[0].plot(t.detach().cpu().numpy(), true_ys.cpu().numpy()[:, i], c='blue', linestyle='dashed')
+        #     ax[0].plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], c='orange')
+        #     # plt.draw()
     #
     # ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
     # ax[1].set_xlabel('Time (s)')

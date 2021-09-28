@@ -10,11 +10,11 @@ import time
 
 parser = argparse.ArgumentParser('transfer demo')
 
-parser.add_argument('--tmax', type=float, default=2)
-parser.add_argument('--dt', type=int, default=0.01)
+parser.add_argument('--tmax', type=float, default=10)
+parser.add_argument('--dt', type=int, default=0.001)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=1000)
+parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_ics', type=int, default=1)
 parser.add_argument('--num_test_ics', type=int, default=100)
 parser.add_argument('--test_freq', type=int, default=100)
@@ -40,12 +40,15 @@ class diffeq(nn.Module):
     # return ydot
     def forward(self,t, X):
         # print(X.shape)
-        u, v, w = X[:,0],X[:,1],X[:,2]
-        up = -self.sigma * (u - v)
-        vp = self.rho * u - v - u * w
-        wp = -self.beta * w + u * v
-        # print(up)
-        return torch.cat([up.reshape(-1,1), vp.reshape(-1,1), wp.reshape(-1,1)],1)
+        return get_udot(t,X,self.sigma,self.rho,self.beta)
+
+def get_udot(t,X,sigma,rho,beta):
+    u, v, w = X[:, 0], X[:, 1], X[:, 2]
+    up = -sigma * (u - v)
+    vp = rho * u - v - u * w
+    wp = -beta * w + u * v
+    # print(up)
+    return torch.cat([up.reshape(-1, 1), vp.reshape(-1, 1), wp.reshape(-1, 1)], 1)
 
 
 class base_diffeq:
@@ -132,7 +135,7 @@ class ODEFunc(nn.Module):
         self.nl = SiLU()#nn.Tanh()
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
-        self.lout = nn.Linear(self.hdim, output_dim, bias=False)
+        self.lout = nn.Linear(self.hdim, output_dim, bias=True)
 
     def h(self, t):
         x = self.lin1(t)
@@ -194,8 +197,8 @@ def visualize(true_y, pred_y,lst):
         ax_traj.set_xlabel('t')
         ax_traj.set_ylabel('x,y')
         # for i in range(3):
-        ax_traj.plot(true_y.cpu().numpy()[:, 0, 0], true_y.cpu().numpy()[:, 0, 1],
-                     'g-')
+        # ax_traj.plot(true_y.cpu().numpy()[:, 0, 0], true_y.cpu().numpy()[:, 0, 1],
+        #              'g-')
         ax_traj.plot(pred_y.cpu().numpy()[:, 0, 0], pred_y.cpu().numpy()[:, 0, 1], '--', 'b--')
         ax_phase.set_yscale('log')
         ax_phase.plot(np.arange(len(lst)), lst)
@@ -211,7 +214,7 @@ if __name__ == '__main__':
     ii = 0
     NDIMZ = args.hidden_size
 
-    sigma = 10
+    sigma = 1
     beta = 2.667
     rho = 28
     diffeq_init = diffeq(sigma,rho,beta)
@@ -246,7 +249,7 @@ if __name__ == '__main__':
             # add t0 to training times, including randomly generated ts
             t0 = torch.tensor([[0.]])
             t0.requires_grad = True
-            tv = args.tmax * torch.rand(100).reshape(-1, 1)
+            tv = args.tmax * torch.rand(10).reshape(-1, 1)
             tv.requires_grad = True
             tv = torch.cat([t0, tv], 0)
 
@@ -257,12 +260,12 @@ if __name__ == '__main__':
             pred_ydot = diff(pred_y,tv)
 
             #enforce diffeq
-            loss_diffeq = (pred_ydot-(diffeq_init(0,pred_y)))**2
+            loss_diffeq = (pred_ydot-get_udot(t,pred_y,sigma,rho,beta).reshape(-1,3))**2
 
             #enforce initial conditions
             loss_ics = (pred_y[0,:].ravel()-true_y0.ravel())**2
 
-            loss = 0.1*torch.mean(loss_diffeq) + torch.mean(loss_ics)
+            loss = torch.mean(loss_diffeq) + torch.mean(loss_ics)
 
             loss.backward()
             optimizer.step()

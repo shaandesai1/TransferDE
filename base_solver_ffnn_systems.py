@@ -25,7 +25,7 @@ parser.add_argument('--num_bundles_test', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
@@ -45,7 +45,7 @@ class diffeq(nn.Module):
         return get_udot(y)
 
 def get_udot(y):
-    Amatrix = torch.tensor([[0., 1.], [-1., 0.]])
+    Amatrix = torch.tensor([[0.5, 1.], [-1., 0.]])
     yd = Amatrix @ y.t()
     return yd.t()
 

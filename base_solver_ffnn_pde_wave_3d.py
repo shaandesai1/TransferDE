@@ -194,10 +194,10 @@ def visualize(u,t,x,y,lst):
         # print(uhat_t0.shape)
         ax_traj.contourf(nx,ny,uhat_t0.reshape(50,50))
 
-        uhat_t1 = func(1*torch.ones_like(nx),nx,ny)
+        uhat_t1 = func((np.pi/2)*torch.ones_like(nx),nx,ny)
         ax_phase.contourf(nx,ny,uhat_t1.reshape(50,50))
 
-        uhat_t2 = func(2 * torch.ones_like(nx), nx, ny)
+        uhat_t2 = func(np.pi * torch.ones_like(nx), nx, ny)
         ax_vecfield.contourf(nx, ny, uhat_t2.reshape(50,50))
 
         # u_true = torch.sin(grid_x)*torch.exp(-grid_t)
@@ -234,7 +234,39 @@ def get_object(x,y,xmid,ymid,radius=1):
     nbool[nbool==0] = 1.
     return nbool
 
+def get_impulse(x,y):
 
+
+    xx = x.ravel()
+    yy = y.ravel()
+
+    return xx*yy*(5.-xx)*(5.-yy)
+    # return_vec = torch.zeros(len(xx),1)
+    # for j in range(len(xx)):
+    #     if xx[j]<2.5:
+    #         return_vec[j] = 3.
+    #     else:
+    #         return_vec[j] = -3.
+    #
+    # # print(return_vec.shape)
+    # return return_vec
+
+
+def get_impulse2(x,y):
+
+    # xx = x.ravel()
+    # yy = y.ravel()
+    # return_vec = torch.zeros(len(xx),1)
+    # for j in range(len(xx)):
+    #     if xx[j]<2.5:
+    #         return_vec[j] = -0.1
+    #     else:
+    #         return_vec[j] = 0.1
+    #
+    # # print(return_vec.shape)
+    # return return_vec
+    # return -.3
+    return 0.
 
 
 if __name__ == '__main__':
@@ -243,14 +275,14 @@ if __name__ == '__main__':
     NDIMZ = args.hidden_size
 
 
-    xl = 0
-    xr = 3
+    xl = 0.
+    xr = 5.
 
-    yb = 0
-    yt = 5
+    yb = 0.
+    yt = 5.
 
-    t0 = 0
-    tmax = 2
+    t0 = 0.
+    tmax = torch.tensor(2*np.pi)
 
     num_xs = 50
     num_ys = 50
@@ -297,22 +329,28 @@ if __name__ == '__main__':
             uxx = diff(u, x_tr, 2)
             uyy = diff(u, y_tr, 2)
 
-            c = get_object(x_tr,y_tr,xmid=1.5,ymid=2.5).reshape(-1,1)
+            c = 1.#get_object(x_tr,y_tr,xmid=1.5,ymid=2.5).reshape(-1,1)
             rho1 = 0#get_rho(t_tr, x_tr, A=10, tmid=0, xmid=0, sigma_X=0.1, sigma_Y=0.1, theta=0)
 
             loss_diffeq = torch.mean((utt-c*uxx-c*uyy)**2)
 
-            u_t0 = ((func(grid_t[:,:,0],grid_x[:,:,0],grid_y[:,:,0]) - 0)**2).mean()
-            u_tmax = ((func(grid_t[:,:,-1],grid_x[:,:,-1],grid_y[:,:,-1]) - 0)**2).mean()
+            sub_t = grid_t[:,:,0].reshape(-1,1)
+            pred_t0 = func(sub_t,grid_x[:,:,0],grid_y[:,:,0])
+            pred_t0_dot = diff(pred_t0,sub_t)
+            u_t0 = ((pred_t0.ravel() - get_impulse(grid_x[:,:,0],grid_y[:,:,0]))**2).mean()
+            u_t0prime = ((pred_t0_dot.ravel() - get_impulse2(grid_x[:, :, 0], grid_y[:, :, 0])) ** 2).mean()
 
-            u_left = ((func(grid_t[0,:,:],grid_x[0,:,:],grid_y[0,:,:]) - 1.)**2).mean()
-            u_right = ((func(grid_t[-1,:,:],grid_x[-1,:,:],grid_y[-1,:,:]) - 0)**2).mean()
 
-            u_bottom = ((func(grid_t[:,0,:],grid_x[:,0,:],grid_y[:,0,:]) - 0)**2).mean()
-            u_top = ((func(grid_t[:,-1,:],grid_x[:,-1,:],grid_y[:,-1,:]) - 0)**2).mean()
+            # u_tmax = ((func(grid_t[:,:,-1],grid_x[:,:,-1],grid_y[:,:,-1]) - 0.)**2).mean()
+
+            u_left = ((func(grid_t[0,:,:],grid_x[0,:,:],grid_y[0,:,:]) - 0.)**2).mean()
+            u_right = ((func(grid_t[-1,:,:],grid_x[-1,:,:],grid_y[-1,:,:]) - 0.)**2).mean()
+
+            u_bottom = ((func(grid_t[:,0,:],grid_x[:,0,:],grid_y[:,0,:]) - 0.)**2).mean()
+            u_top = ((func(grid_t[:,-1,:],grid_x[:,-1,:],grid_y[:,-1,:]) - 0.)**2).mean()
 
             #enforce initial conditions
-            loss_ics = u_t0 +u_tmax + u_left + u_right + u_bottom + u_top
+            loss_ics = 3*u_t0 + u_left + u_right + u_bottom + u_top
             loss = loss_diffeq + loss_ics
             loss.backward()
             optimizer.step()
