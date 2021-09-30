@@ -197,6 +197,7 @@ def get_wout(s, sd,sdd, y0,y0dot,m1,m2,k1,k2, t):
     # rhs = torch.cat([top,bottom],0)
     DH = hddothat + Amatrixhat@hhat
 
+
     h0= torch.block_diag(s[0,:].reshape(1,-1),s[0,:].reshape(1,-1))
 
     h0dot = torch.block_diag(sd[0, :].reshape(1, -1), sd[0, :].reshape(1, -1))
