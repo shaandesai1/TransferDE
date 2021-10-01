@@ -10,7 +10,7 @@ def parse_args_(str_):
 	parser.add_argument('--wout', type=str, default='analytic')
 	parser.add_argument('--paramg', type=str, default='lin')
 
-	parser.add_argument('--niters', type=int, default=100)
+	parser.add_argument('--niters', type=int, default=1000)
 	parser.add_argument('--hidden_size', type=int, default=200)
 
 	parser.add_argument('--test_freq', type=int, default=10)
@@ -43,9 +43,9 @@ def parse_args_bundles_(str_):
 	parser.add_argument('--plot_tsne', type = int, default = 0)
 	parser.add_argument('--no_bias_at_inference', action = 'store_true')
 	parser.add_argument('--force_bias', type = int, default = 0)
-	parser.add_argument('--n_forces', type = int, default = 0)
+	parser.add_argument('--num_forces', type = int, default = 0)
 	parser.add_argument('--ic_tr_range', nargs="+", default =[-10, 10])
-	parser.add_argument('--ic_te_range', nargs="+", type = int, default =[-15, 15])
+	parser.add_argument('--ic_te_range', nargs="+", type = int, default =[-10, 10])
 	parser.add_argument('--exp_name', type = str, default = "")
 
 

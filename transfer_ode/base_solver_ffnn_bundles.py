@@ -141,7 +141,8 @@ class ODEFunc(nn.Module):
         self.lout = nn.Linear(self.hdim, output_dim, bias = calc_bias)
 
     def forward(self, t):
-        x = self.h(t)
+        self.h_ = x = self.h(t)
+        #self.h_.retain_grad()
         x = self.lout(x)
         return x
 
@@ -156,22 +157,24 @@ class ODEFunc(nn.Module):
         return x
 
 
-def diff(u, t, order=1):
+def diff(u, t, order=1, grad_outputs = None):
     # code adapted from neurodiffeq library
     # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
     """The derivative of a variable with respect to another.
     """
     # ones = torch.ones_like(u)
+    sum_u = u.sum(axis = 0)
+    #assert sum_u.shape == grad_outputs.shape, f'{sum_u.shape} == {grad_outputs.shape}'
 
-    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])], 1)
+    der = torch.cat([torch.autograd.grad(sum_u[i], t, create_graph=True)[0] for i in range(u.shape[1])], 1)
     if der is None:
         print('derivative is None')
         return torch.zeros_like(t, requires_grad=True)
     else:
         der.requires_grad_()
     for i in range(1, order):
-
-        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])], 1)
+        sum_der = der.sum(axis = 0)
+        der = torch.cat([torch.autograd.grad(sum_der[j], t, create_graph=True)[0] for j in range(der.shape[1])], 1)
         # print()
         if der is None:
             print('derivative is None')
@@ -235,8 +238,7 @@ class Transformer_Analytic(nn.Module):
             return y_centered
 
     def get_wout(self, s, sd, y0, t, a0s, fs):
-
-        y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
+        ny0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
         if self.calc_bias:
             ones_col = torch.ones_like(s[:,0]).view(-1,1)
@@ -246,7 +248,39 @@ class Transformer_Analytic(nn.Module):
             #sd with zeros
             sd = torch.hstack((0 * ones_col, sd))
 
+        na0 = torch.cat([a_(t) for a_ in a0s], 1)
+        na1 = torch.ones_like(na0)
+        nf = torch.cat([f_(t) for f_ in fs], 1)
+        WS = []
+        BS = []
+        for i in range(nf.shape[1]):
+            y0 = ny0[:,i].reshape(-1,1)
+            a0 = na0[:,i].reshape(-1,1)
+            a1 = na1[:,i].reshape(-1,1)
+            f = nf[:,i].reshape(-1,1)
+            D0 = -f
+            DH = (a1*sd + a0 * s)
+            h0m = s[0].reshape(-1, 1)
+            LHS = DH.t() @ DH + h0m @ h0m.t()
+            W0 = torch.linalg.solve(LHS, -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
+
+            if self.calc_bias:
+                weight = W0[1:]
+                bias = W0[0]
+                W0 = weight
+                # elif ridge:
+                #     W0  = torch.tensor(clf.coef_, dtype = torch.float32).T
+                #     bias = clf.intercept_
+            else:
+                bias = 0
+
+            WS.append(W0)
+            BS.append(bias)
+
+        nWS = (torch.cat(WS)).reshape(nf.shape[1],-1).T
+        nBS = (torch.cat(BS)).reshape(nf.shape[1],-1).T
+        return nWS, nBS#.t()
         
 
         a0 = a0s(t).reshape(-1, 1)
@@ -291,15 +325,7 @@ class Transformer_Analytic(nn.Module):
 
         #W0 = torch.linalg.solve( LHS , -DH.T @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
-        if self.calc_bias:
-            weight = W0[1:]
-            bias = W0[0]
-            W0 = weight
-            # elif ridge:
-            #     W0  = torch.tensor(clf.coef_, dtype = torch.float32).T
-            #     bias = clf.intercept_
-        else:
-            bias = 0
+        
         return W0, bias
 
 
@@ -377,13 +403,14 @@ class Transformer_Analytic(nn.Module):
 #     # return W0
 import matplotlib.pyplot as plt
 
-# fig = plt.figure(figsize=(12, 4), facecolor='white')
-# ax_traj = fig.add_subplot(131, frameon=False)
-# ax_phase = fig.add_subplot(132, frameon=False)
-# ax_vecfield = fig.add_subplot(133, frameon=False)
-#plt.show(block=False)
+if args.viz:
+    fig = plt.figure(figsize=(12, 4), facecolor='white')
+    ax_traj = fig.add_subplot(131, frameon=False)
+    ax_phase = fig.add_subplot(132, frameon=False)
+    ax_vecfield = fig.add_subplot(133, frameon=False)
+    plt.show(block=False)
 
-def visualize(t, true_y, pred_y, lst):
+def visualize(tv, true_y, pred_y, lst = None):
     
 
     if args.viz:
@@ -391,17 +418,20 @@ def visualize(t, true_y, pred_y, lst):
         ax_traj.set_title('Trajectories')
         ax_traj.set_xlabel('t')
         ax_traj.set_ylabel('x,y')
-        for i in range(args.num_bundles):
-            ax_traj.plot(t.detach().cpu().numpy(), true_y.cpu().numpy()[:, i],
-                         'g-')
-            ax_traj.plot(t.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], '--', 'b--')
+        # for i in range(args.num_bundles):
+        #     ax_traj.plot(tv.detach().cpu().numpy(), true_y.cpu().numpy()[:, i],
+        #                  'g-')
+        #     ax_traj.plot(tv.detach().cpu().numpy(), pred_y.cpu().numpy()[:, i], '--', 'b--')
+        plt.plot(lst)
+        plt.yscale('log')
         ax_phase.set_yscale('log')
-        ax_phase.plot(np.arange(len(lst)), lst)
+        #ax_phase.plot(np.arange(len(lst)), lst)
 
         ax_traj.legend()
 
         plt.draw()
         plt.pause(0.001)
+        #plt.show()
 
 # def optimize(a0 = lambda t: t**2,#-(5./t + t)#-3*t**2
 #              a1 = lambda t:1 + 0.*t,
@@ -434,6 +464,13 @@ def visualize(t, true_y, pred_y, lst):
 #             ):
 
 #if args.viz:
+
+hp1 = phase_shift = 1*np.pi
+hp2 = amplitude_range = 2
+hp3 = angular_freq_range = 2
+f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+
+f_train = [torch.sin, torch.cos, lambda t: t, lambda t: torch.ones_like(t), lambda t: 1+ t, lambda t: torch.exp(-t)* torch.sin(t)] +[ f_generator.realize_recursive() for _ in range(3)] 
     
 
 def optimize(ic_train_range, ic_test_range):
@@ -481,9 +518,11 @@ def optimize(ic_train_range, ic_test_range):
     hp2 = amplitude_range = 5
     hp3 = angular_freq_range = 3
 
-    f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+    num_forces = max(num_bundles//5, 1)
 
-    f_train = [torch.sin, torch.cos] +[ f_generator.realize_recursive() for _ in range(n_forces)] #+ [ f_generator.realize() for _ in range(n_forces)]
+    # f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+
+    # f_train = [torch.sin, torch.cos] +[ f_generator.realize_recursive() for _ in range(num_forces)] #+ [ f_generator.realize() for _ in range(n_forces)]
     # f_train = [lambda t: torch.cos(t) + force_bias,
     #            lambda t: torch.cos(t) - force_bias,
     #            lambda t: torch.sin(t) - force_bias, 
@@ -491,7 +530,7 @@ def optimize(ic_train_range, ic_test_range):
     #            lambda t: torch.sin(t)* torch.cos(t) - force_bias,
     #            lambda t: torch.sin(t)* torch.cos(t) + force_bias]
 
-    a0_train = [lambda t:t**2]
+    a0_train = [lambda t: torch.ones_like(t), lambda t: t + 1, lambda t: t, lambda t: t**2, lambda t: t**3] #[lambda t:t**2]
 
     r1 = ic_train_range[0]
     r2 = ic_train_range[1]
@@ -517,6 +556,7 @@ def optimize(ic_train_range, ic_test_range):
     func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = ffnn_bias)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma = 0.5)
 
     loss_collector = []
     if not "exp_name" in locals().keys():
@@ -544,15 +584,17 @@ def optimize(ic_train_range, ic_test_range):
     exp_name = filename  + ".pt"
 
     #if args.viz:
+    spikethreshold = 0.2
 
-    #assert False, args
-    
 
     if not args.evaluate_only:
-        assert False, "sadf"
+        best_residual = np.inf
+        lrs = []
 
         for itr in range(1, args.niters + 1):
             func.train()
+
+
 
             # add t0 to training times, including randomly generated ts
             t0 = torch.tensor([[0.]])
@@ -563,30 +605,79 @@ def optimize(ic_train_range, ic_test_range):
             optimizer.zero_grad()
 
             # compute hwout,hdotwout
+            # h = func.h(tv)
+            # hd = diff(h, tv)
+
+            #h = func.h(tv)
+
+
+            # h = func.h(tv)# @ .weight.T
+            # pred_y = func.lout(h)
+
             pred_y = func(tv)
-            pred_ydot = diff(pred_y, tv)
+
+            pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
+
+            #hd = diff(h, tv, grad_outputs = func.lout.weight.T)
+
+            #pred_ydot = hd @ func.lout.weight.T
+            #pred_ydot.retain_grad()
             
-            
+            udot = get_udot(tv,pred_y,a0_samples,f_samples)
 
             # enforce diffeq
-            loss_diffeq = pred_ydot - get_udot(tv,pred_y,a0_samples,f_samples)
+            loss_diffeq = pred_ydot - udot #get_udot(tv,pred_y,a0_samples,f_samples)
             # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
             #     tv.detach()).reshape(-1, 1)
 
             # enforce initial conditions
             loss_ics = pred_y[0, :].ravel() - y0_samples.ravel()
 
-            loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(torch.square(loss_ics))
+            L1 = torch.mean(torch.square(loss_diffeq)) 
+            L2 = torch.mean(torch.square(loss_ics))
+
+            
+
+            loss = L1 + L2 
             loss.backward()
             optimizer.step()
-            loss_collector.append(torch.square(loss_diffeq).mean().item())
+            L3 = torch.square(loss_diffeq).mean().item()
+
+            loss_collector.append(L3)
+
             if itr % args.test_freq == 0:
                 func.eval()
-                pred_y = func(t).detach()
-                pred_y = pred_y.reshape(-1, args.num_bundles)
-                # if args.viz:
-                #     visualize(t, true_y.detach(), pred_y.detach(), loss_collector)
+
+                # pred_y_ = pred_y[:,1:].detach()
+                #assert False, pred_y.shape
+                # pred_ydot = pred_ydot[:,1:].detach()
+                assert pred_y[1:,:].shape == true_y.shape, f'{pred_y.shape} != {true_y.shape}'
+
+                # pred_y = pred_y.reshape(-1, args.num_bundles)
+                #visualize(t.ravel(), true_y.detach(), pred_y[1:,:].detach(), loss_collector)
                 ii += 1
+
+                current_residual = torch.mean((pred_ydot - udot)**2)
+                #print(current_residual.item())
+                if current_residual < best_residual:
+                    #print("saving")
+
+                    torch.save(func.state_dict(), 'func_ffnn_bundles')
+                    best_residual = current_residual
+                    print(itr,best_residual.item())
+                elif itr > 1: 
+                    if np.log(float(prev_step_loss))  - np.log(float(L1)) > spikethreshold:
+                        lrs.append(optimizer.param_groups[0]["lr"])
+                        scheduler.step()
+
+            prev_step_loss = float(L1)
+            # if itr % args.test_freq == 0:
+            #     func.eval()
+            #     pred_y = func(t).detach()
+            #     pred_y = pred_y.reshape(-1, args.num_bundles)
+            #     # if args.viz:
+            #     #     visualize(t, true_y.detach(), pred_y.detach(), loss_collector)
+            #     ii += 1
         #print("saving", func.state_dict() )
         torch.save(func.state_dict(), exp_name)
 
@@ -594,10 +685,10 @@ def optimize(ic_train_range, ic_test_range):
     scale_factor = 1.2
     hp1, hp2, hp3 = [hp *scale_factor for hp in [hp1, hp2, hp3]]
 
-    wave_gen_test = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+    #wave_gen_test = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
 
-    f_test = [ wave_gen_test.realize_recursive() for _ in range(num_bundles_test)] #[lambda t: torch.sin(t)*torch.cos(t)]+
-    a0_test = [lambda t: t**2]
+    f_test = f_train#[ wave_gen_test.realize_recursive() for _ in range(num_bundles_test)] #[lambda t: torch.sin(t)*torch.cos(t)]+
+    a0_test = a0_train #
     r1 = ic_test_range[0]
     r2 = ic_test_range[1]
     true_y0 = (r2 - r1) * torch.rand(100) + r1
@@ -667,7 +758,7 @@ def optimize(ic_train_range, ic_test_range):
 
     s1 = time.time()
 
-    wout, bias = wout_gen.get_wout(h, hd, y0_samples, t.detach(), a0_samples[0], f_samples)
+    wout, bias = wout_gen.get_wout(h, hd, y0_samples, t.detach(), a0_samples, f_samples)
     pred_y = h @ wout + bias
 
     s2 = time.time()
@@ -677,8 +768,6 @@ def optimize(ic_train_range, ic_test_range):
     true_ys = (gt_generator.get_solution(y0_samples, t.ravel())).reshape(-1, args.num_bundles_test)
     s2 = time.time()
     print(f'gt_ics:{s2 - s1}')
-
-    print(true_ys.shape,pred_y.shape)
 
     # s1 = time.time()
     # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
@@ -710,35 +799,53 @@ def optimize(ic_train_range, ic_test_range):
     prediction_residuals = ((pred_y - true_ys) ** 2)
     #estimation_residuals = ((estim_ys - true_ys) ** 2)
     score = prediction_residuals.mean()
-    return func.state_dict(), score, pred_y, true_ys, filename
+    return func.state_dict(), score, pred_y, true_ys, filename, loss_collector, h
 
 
 if __name__ == "__main__":
-    evaluate_only = False
+
+    num_forces = 100
+
+    #model, score, pred_y, true_y, filename, loss_collector = optimize(ic_tr_range, ic_te_range)
+
+    # results["models"].append(model)
+    # results["scores"].append(score)
+    # results["pred_ys"].append(pred_y)
+    # results["true_ys"].append(true_y)
+
+    # with open(filename + '.pickle', 'wb') as f:
+    #     pickle.dump(results, f)
+
+    #evaluate_only = False
     #score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
+    if True:
+        for n in [1]:#[1, 5, 10, 20, 50, 100, 500, 1000]:
 
-    for n in [1, 2, 10, 100, 500, 1000]:
-        for ratio in [1, 2, 10]:
+            assert ffnn_bias, 'asdf'
+            #for ratio in [1, 2, 10]:#[1, 2, 10]:
+            ratio = 1
             num_forces = max(n//ratio,1)
-            num_bundles = n
+            args.num_bundles = num_bundles = n
 
-            print(f'{num_bundles/num_forces}')
+            print(f'NUM BUNDLES: {num_bundles}')
             #assert False, f'{num_bundles/num_forces}' 
         
             #if evaluate_only:
-            results = {"models" : [], "scores" : [], "pred_ys" : [], "true_ys" : []}
-            for i in range(10):
+            results = {"models" : [], "scores" : [], "pred_ys" : [], "true_ys" : [], "loss" : [], "hs" : []}
+            for i in range(1):
                 
-                model, score, pred_y, true_y, filename = optimize(ic_tr_range, ic_te_range)
+                model, score, pred_y, true_y, filename, loss_collector, h = optimize(ic_tr_range, ic_te_range)
                 results["models"].append(model)
                 results["scores"].append(score)
                 results["pred_ys"].append(pred_y)
                 results["true_ys"].append(true_y)
+                results["loss"].append(loss_collector)
+                results["hs"].append(h)
 
             with open(filename + '.pickle', 'wb') as f:
                 pickle.dump(results, f)
 
-            df2 = pd.read_pickle(filename + '.pickle')
-            print(df2)
+            # df2 = pd.read_pickle(filename + '.pickle')
+            # print(df2)
 
-        
+    
