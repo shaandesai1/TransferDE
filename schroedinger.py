@@ -15,7 +15,7 @@ parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=50)
+parser.add_argument('--hidden_size', type=int, default=60)
 parser.add_argument('--num_ics', type=int, default=3)
 parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
@@ -63,7 +63,7 @@ class ODEFunc(nn.Module):
     def hidden_states(self, t,x):
         inputs_ = torch.cat([t.reshape(-1,1),x.reshape(-1,1)],1)
         u = self.lin1(inputs_)
-        u = self.nl1(u)#self.weight_1*self.nl1(u) + (1.-self.weight_1)*self.nl2(u)
+        u = self.nl2(u)#self.weight_1*self.nl1(u) + (1.-self.weight_1)*self.nl2(u)
         u = self.lin2(u)
         u = self.weight_2*self.nl1(u) + (1.-self.weight_2)*self.nl2(u)
         return u
@@ -75,6 +75,17 @@ class ODEFunc(nn.Module):
 
     def wouts(self, x):
         return self.lout(x)
+
+
+def psi(t,x,m,sig,p0,x0=0.):
+    E = p0**2/2/m
+    fac1= np.pi**(-1/4)/np.sqrt(sig*(1+1j*t/(m*sig**2)))
+    fac2= - (x-(x0+p0*t/m))**2/(2*sig**2*(1+1j*t/(m*sig**2)))
+    fac3= 1j*(p0*x-E*t)
+    return fac1*np.exp(fac2)*np.exp(fac3)
+
+
+
 
 def diff(u, t, order=1):
     # code adapted from neurodiffeq library
@@ -134,12 +145,106 @@ class Transformer_Analytic(nn.Module):
 
     def get_wout(self, func,t,x,grid_t,grid_x,sigma,p0):
 
-        H = torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
-        dHdt = diff(H,t,1)#torch.cat([diff(H,t,1),torch.zeros(len(t),1)],1)
-        d2Hdx2 =diff(H,x,2) #torch.cat([diff(H,x,2),torch.zeros(len(t),1)],1)
+        # t,x = grid_t[:, -1].reshape(-1, 1), grid_x[:, -1].reshape(-1, 1)
+
+        # t,x = torch.linspace(0,1,100,requires_grad=True).reshape(-1,1),torch.linspace(-10,10,100,requires_grad=True).reshape(-1,1)
+        zindices = np.random.choice(len(t),60)
+        # print(zindices)
+        t = t[zindices,:].reshape(-1,1)
+        x = x[zindices,:].reshape(-1,1)
+
+        # H = func.hidden_states(t, x)  # torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
+        # dHdt = diff(H,t)#torch.cat([diff(H,t,1),torch.zeros(len(t),1)],1)
+        # d2Hdx2 =diff(H,x,2)#torch.cat([diff(H,x,2),torch.zeros(len(t),1)],1)
+        #
+        # # H = torch.cat([H,torch.ones(len(t),1)],1)
+        #
+        # Amatrix = get_block_matrix(torch.tensor(1.))
+        #
+        # print(Amatrix)
+        #
+        # HHt = torch.block_diag(dHdt, dHdt)
+        # HHxx = torch.block_diag(d2Hdx2, d2Hdx2)
+        # HH = torch.block_diag(H,H)
+        #
+        # # print(HHt.shape,HHxx.shape,HH.shape)
+        #
+        #
+        # Amatrixhat = torch.zeros((HH.shape[0], HH.shape[0]))
+        # # print(Amatrix.shape)
+        # for i in range(Amatrix.shape[0]):
+        #     for j in range(Amatrix.shape[1]):
+        #         # print(Amatrix[i,j])
+        #         Amatrixhat[i * H.shape[0]:(i + 1) * H.shape[0], j * H.shape[0]:(j + 1) * H.shape[0]] = torch.eye(
+        #             H.shape[0], H.shape[0]) * Amatrix[i, j]
+        #
+        # # DH = hddothat + Amatrixhat @ hhat
+        # # print(Amatrix)
+        # # print(Amatrixhat)
+        # DH = (HHt-Amatrixhat@HHxx)
+        #
+        # print(grid_t[:,0],grid_x[:,0])
+        # H0 = func.hidden_states(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1))
+        # # H0 = self.append_ones(H0)
+        # HH0 = torch.block_diag(H0,H0)
+        #
+        # lbc = grid_x[0, :].reshape(-1, 1)
+        # HL = func.hidden_states(grid_t[0, :].reshape(-1, 1),lbc)
+        # HLd = diff(HL, lbc)
+        #
+        # # HL = self.append_ones(HL)
+        # HHL = torch.block_diag(HL, HL)
+        # # HLd = self.append_ones(HLd,'zeros')
+        # HHLd = torch.block_diag(HLd, HLd)
+        # # print(HLd)
+        #
+        # rbc = grid_x[-1, :].reshape(-1, 1)
+        # # print(rbc)
+        # HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), rbc)
+        # HRd = diff(HR, rbc)
+        # # print(HRd)
+        #
+        # # HR = self.append_ones(HR)
+        # HHR = torch.block_diag(HR, HR)
+        # # HRd = self.append_ones(HRd,'zeros')
+        # # print(HRd[:,-1])
+        # HHRd = torch.block_diag(HRd, HRd)
+        #
+        # full_IC_matrix = []
+        # for sigma_ in sigma:
+        #     for p0_ in p0:
+        #         print(sigma_)
+        #         IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma_, x0=0., p0=p0_)
+        #         new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
+        #
+        #         print(IC[:,0])
+        #         print(new_IC)
+        #         full_IC_matrix.append(new_IC)
+        #
+        # full_IC_matrix = torch.hstack(full_IC_matrix)
+        #
+        # print('full ic matrix')
+        # print(full_IC_matrix.shape)
+        #
+        # LVEC = DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd)
+        # #
+        # # print(torch.linalg.cond(LVEC))
+        # #
+        # W0 = torch.linalg.solve(LVEC,HH0.t()@full_IC_matrix)
+        # #
+        # # # nwout = torch.cat([W0[:args.hidden_size + 1, :].reshape(-1, ), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
+        # #
+        # return W0,dHdt,d2Hdx2
+
+        H = func.hidden_states(t,x)#torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
+        dHdt = torch.cat([diff(H,t,1),torch.zeros(len(t),1)],1)
+        d2Hdx2 =torch.cat([diff(H,x,2),torch.zeros(len(t),1)],1)
+
+        H = torch.cat([H,torch.ones(len(t),1)],1)
 
         Amatrix = get_block_matrix(torch.tensor(1.))
 
+        # print(Amatrix)
 
         HHt = torch.block_diag(dHdt, dHdt)
         HHxx = torch.block_diag(d2Hdx2, d2Hdx2)
@@ -157,41 +262,67 @@ class Transformer_Analytic(nn.Module):
                     H.shape[0], H.shape[0]) * Amatrix[i, j]
 
         # DH = hddothat + Amatrixhat @ hhat
-
+        # print(Amatrix)
+        # print(Amatrixhat)
         DH = (HHt-Amatrixhat@HHxx)
 
+        # print(grid_t[:,0],grid_x[:,0])
         H0 = func.hidden_states(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1))
         H0 = self.append_ones(H0)
         HH0 = torch.block_diag(H0,H0)
 
         lbc = grid_x[0, :].reshape(-1, 1)
         HL = func.hidden_states(grid_t[0, :].reshape(-1, 1),lbc)
+        HLd = diff(HL, lbc)
+
         HL = self.append_ones(HL)
         HHL = torch.block_diag(HL, HL)
-
-        HLd = diff(HL,lbc)
-        #HLd = self.append_ones(HLd,'zeros')
+        HLd = self.append_ones(HLd,'zeros')
         HHLd = torch.block_diag(HLd, HLd)
+        # print(HLd)
 
         rbc = grid_x[-1, :].reshape(-1, 1)
+        # print(rbc)
         HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), rbc)
+        HRd = diff(HR, rbc)
+        # print(HRd)
+
         HR = self.append_ones(HR)
         HHR = torch.block_diag(HR, HR)
-
-        HRd = diff(HR, rbc)
-        #HRd = self.append_ones(HRd,'zeros')
+        HRd = self.append_ones(HRd,'zeros')
+        # print(HRd[:,-1])
         HHRd = torch.block_diag(HRd, HRd)
 
-        IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma, x0=0., p0=p0)
-        new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
+        full_IC_matrix = []
+        for sigma_ in sigma:
+            for p0_ in p0:
+                print(sigma_)
+                IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma_, x0=0., p0=p0_)
+                new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
+
+                print(IC[:,0])
+                print(new_IC)
+                full_IC_matrix.append(new_IC)
+
+        full_IC_matrix = torch.hstack(full_IC_matrix)
+
+        # print('full ic matrix')
+        # print(full_IC_matrix.shape)
 
         # print(DH.shape,HH0.shape,HHL.shape,HHR.shape,HHLd.shape,HHRd.shape,new_IC.shape)
+        #
+        # print(DH.t()@DH,HH0.t()@HH0)
 
-        W0 = torch.linalg.solve(DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd),HH0.t()@new_IC)
 
-        nwout = torch.cat([W0[:args.hidden_size + 1, 0].reshape(-1, 1), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
+        LVEC = DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd)
 
-        return nwout,dHdt,d2Hdx2
+        print(torch.linalg.cond(LVEC+0.01))
+
+        W0 = torch.linalg.solve(LVEC+ .01,HH0.t()@full_IC_matrix)
+
+        # nwout = torch.cat([W0[:args.hidden_size + 1, :].reshape(-1, ), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
+
+        return W0,dHdt,d2Hdx2
 
 
 if args.viz:
@@ -213,22 +344,45 @@ def visualize(func,u,t,x,grid_t,grid_x,lst):
         ax_vecfield2.cla()
         # ax_traj.contourf(x,t,u[:,0].reshape(len(x),len(t)).t())
         # u_true = torch.sin(grid_x)*torch.exp(-grid_t)
-        ax_phase.contourf(x, t, (u[:, 0]**2 + u[:,1]**2).reshape(len(x), len(t)).t())
+        # ax_phase.contourf(x, t, (u[:, 0]**2 + u[:,1]**2).reshape(len(x), len(t)).t())
 
+        # ps1= get_ic(torch.ones(500)*0,torch.linspace(-10.,10.,500),0.5,x0=0.,p0=1.)
+        ps11 = psi(torch.ones(500)*0,torch.linspace(-10.,10.,500), 1, 0.5, 1, x0=0)
+        ps2 = psi(torch.ones(500) * 0, torch.linspace(-10., 10., 500), 1, 0.6, 2, x0=0)
+        ps3 = psi(torch.ones(500) * 0, torch.linspace(-10., 10., 500), 1, 0.7, 3, x0=0)
 
-        unew = func(torch.ones(500)*0.5,torch.linspace(-10.,10.,500))
+        unew = func(torch.ones(500)*0,torch.linspace(-10.,10.,500))
 
+        with torch.no_grad():
         # unew1 = func(torch.ones(50) * 2., torch.linspace(-10., 10., 50))
-        ax_vecfield.plot(unew[:, 0], unew[:, 1])
+            ax_traj.plot(unew[:, 0])
+            ax_traj.plot(unew[:,1])
+            ax_phase.plot(unew[:,2])
+            ax_phase.plot(unew[:,3])
+            # ax_vecfield.plot(unew[:,4],unew[:,5])
 
-        ax_vecfield2.plot(unew[:,0])
-        ax_vecfield2.plot(unew[:,1])
+            # ax_traj.plot((ps1[:,0]),label='ti eqn')
+            ax_traj.plot(np.real(ps11),label='td eqn')
+            ax_traj.plot(np.imag(ps11), label='td eqn')
+            ax_phase.plot(np.real(ps2))
+            ax_phase.plot(np.imag(ps2))
+
+            ps1 = psi(torch.ones(500) * .5, torch.linspace(-10., 10., 500), 1, 0.5, 1, x0=0)
+
+            unew = func(torch.ones(500) * 0.5, torch.linspace(-10., 10., 500))
+
+            ax_vecfield.plot(np.real(ps1))
+            ax_vecfield.plot(np.imag(ps1))
+
+            ax_vecfield.plot(unew[:,0])
+            ax_vecfield.plot(unew[:,1])
 
         # ax_vecfield2.scatter(unew[:,0],unew[:,1])
 
         # ax_vecfield2.scatter(unew1[:, 0], unew1[:, 1])
 
         # ax_vecfield.contourf(x, t, (u_true.reshape(len(x), len(t)).t()-u.reshape(len(x),len(t)).t())**2)
+        plt.legend()
         ax_traj.legend()
         plt.draw()
         plt.pause(0.001)
@@ -252,6 +406,9 @@ def get_ic(t,x,sigma=0.5,x0=0.,p0=1.):
     img = c1*c2*c3*c5
 
     return torch.cat([real,img],1)
+
+
+
 
 
 def get_block_matrix(m1):
@@ -320,8 +477,8 @@ if __name__ == '__main__':
         for itr in range(1, args.niters + 1):
             func.train()
             indices = torch.tensor(np.random.choice(len(grid_x),1000))
-            x_tr = (grid_x[indices]).reshape(-1,1) + 0.1*torch.rand(indices)
-            t_tr = (grid_t[indices]).reshape(-1,1) + 0.1*torch.rand(indices)
+            x_tr = (grid_x[indices]).reshape(-1,1) + 0.1*torch.rand(len(indices),1)
+            t_tr = (grid_t[indices]).reshape(-1,1) + 0.005*torch.rand(len(indices),1)
 
             # add t0 to training times, including randomly generated ts
             optimizer.zero_grad()
@@ -378,36 +535,100 @@ if __name__ == '__main__':
     # grid_x.requires_grad = True
     # grid_t.requires_grad = True
 
+
+    sigmas = torch.tensor([0.5,0.6,0.7])#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
+    p0s = torch.tensor([1.,2.,3.])#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+
+
+
     # print(grid_t[:,0], grid_x[:,0])
     wout_gen = Transformer_Analytic()
     grid_xx = grid_x.ravel()
     grid_tt = grid_t.ravel()
 
-    WOUT,Ht,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,0.8,2.)
+    # func, t, x, grid_t, grid_x, sigma, p0
 
-    H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
+    WOUT,Ht,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,sigmas,p0s)
 
-    print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
+    # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
+    H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(grid_xx),1)],1)
 
+    # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
+    HH = torch.block_diag(H,H)
+
+    teval_point = 1.
+
+    error_vec = []
+
+    fig,ax = plt.subplots(3,3)
+    axs = ax.ravel()
     with torch.no_grad():
-        out_pred = (H@WOUT)
-        # print((out_pred))
-        loss_test = torch.mean((Ht@WOUT - (Hxx@WOUT) @ get_block_matrix(torch.tensor(1.)).t()) ** 2)
+        out_pred = HH@WOUT
+        # print(out_pred.shape)
+        idx = 0
+        for sigma_ in sigmas:
+            for p0_ in p0s:
+                # print(sigma_)
+                gt_psi = psi(teval_point,x_evals, 1., sigma_, p0_, x0=0)
+                gt_real = np.real(gt_psi)
+                gt_img = np.imag(gt_psi)
+                pred_psi = (out_pred[:,idx]).reshape(-1,1)
+                pred_psi_real = (pred_psi[:len(grid_xx), 0]).reshape(len(x_evals), len(y_evals)).t()
+                pred_psi_img = (pred_psi[len(grid_xx):, 0]).reshape(len(x_evals), len(y_evals)).t()
+                dx = (xr - xl) / 100
+                norm_const = 1.#np.sqrt(((pred_psi_real[-1, :] ** 2 + pred_psi_img[-1, :] ** 2) * dx).sum())
 
-        print(torch.mean(loss_test**2))
-        fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+                print(norm_const**2)
 
-        pc=ax[0].contourf(x_evals, y_evals, (out_pred[:,0]**2 + out_pred[:,1]**2).reshape(len(x_evals), len(y_evals)).t())
-        ax[0].set_title('predicted solution')
-        fig.colorbar(pc, ax=ax[0])
+                # error = ((gt_real.ravel()-pred_psi_real[0,:].ravel()/norm_const)**2 + (gt_img.ravel()-pred_psi_img[0,:].ravel()/norm_const)**2).mean()
+                # error_vec.append(error)
 
-        new_pred = out_pred[:,0].reshape(len(x_evals), len(y_evals)).t()
-        new_pred1 = out_pred[:, 1].reshape(len(x_evals), len(y_evals)).t()
+                eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
 
-        ax[1].plot(new_pred[0,:],new_pred1[0,:])
+                if idx == 0:
+                    axs[idx].plot(eval_func[:,0],eval_func[:,1],label='pred_train',linestyle='--')
+                    print('func')
+                    print(((eval_func[:,0]**2 + eval_func[:,1]**2)*dx).sum())
+                if idx == 4:
+                    axs[idx].plot(eval_func[:,2],eval_func[:,3],label='pred_train',linestyle='--')
+                if idx == 8:
+                    axs[idx].plot(eval_func[:,4],eval_func[:,5],label='pred_train',linestyle='--')
 
-        ax[2].plot(new_pred[-1, :], new_pred1[-1, :])
+
+                # print(norm_const)
+                axs[idx].plot(gt_real,gt_img,label='gt')
+                axs[idx].plot(pred_psi_real[-1,:]/norm_const,pred_psi_img[-1,:]/norm_const,label='pred')
+
+
+                # axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred')
+
+                # axs[idx].plot(pred_psi_real[-1, :], pred_psi_img[-1, :], label='pred1')
+                # axs[idx].plot(pred_psi_real[:, 0], pred_psi_img[:, 0], label='pred2')
+                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred3')
+
+                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred1')
+                idx += 1
+                plt.legend()
         plt.show()
+        print(error_vec)
+
+        # print((out_pred))
+        # loss_test = torch.mean((Ht@WOUT - (Hxx@WOUT) @ get_block_matrix(torch.tensor(1.)).t()) ** 2)
+
+        # print(torch.mean(loss_test**2))
+        # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+        #
+        # pc=ax[0].contourf(x_evals, y_evals, (out_pred[:,0]**2 + out_pred[:,1]**2).reshape(len(x_evals), len(y_evals)).t())
+        # ax[0].set_title('predicted solution')
+        # fig.colorbar(pc, ax=ax[0])
+        #
+        # new_pred = out_pred[:,0].reshape(len(x_evals), len(y_evals)).t()
+        # new_pred1 = out_pred[:, 1].reshape(len(x_evals), len(y_evals)).t()
+        #
+        # ax[1].plot(new_pred[0,:],new_pred1[0,:])
+        #
+        # ax[2].plot(new_pred[-1, :], new_pred1[-1, :])
+        # plt.show()
     # import numpy as np
     # from matplotlib import pyplot as plt
     # from matplotlib.animation import FuncAnimation
