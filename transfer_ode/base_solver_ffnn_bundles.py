@@ -25,6 +25,10 @@ import torch
 import pickle
 import pandas as pd
 
+from types import SimpleNamespace
+
+
+
 if sys.stdin and sys.stdin.isatty():
     print("iteractive")
 else:
@@ -49,11 +53,11 @@ else:
 # scaler = MinMaxScaler()
 
 #instead of keeping the parser args localy we can externalize them
-parser = parser_args.parse_args_bundles_('transfer demo')
-args = parser.parse_args()
-locals().update(args.__dict__)
+# parser = parser_args.parse_args_bundles_('transfer demo')
+# args = parser.parse_args()
+# locals().update(args.__dict__)
 
-scaler = MinMaxScaler()
+# scaler = MinMaxScaler()
 
 
 class diffeq(nn.Module):
@@ -262,7 +266,10 @@ class Transformer_Analytic(nn.Module):
             DH = (a1*sd + a0 * s)
             h0m = s[0].reshape(-1, 1)
             LHS = DH.t() @ DH + h0m @ h0m.t()
-            W0 = torch.linalg.solve(LHS, -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+            try:
+                W0 = torch.linalg.solve(LHS, -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+            except:
+                W0 = torch.linalg.solve(LHS + 1e-3*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
 
             if self.calc_bias:
@@ -328,7 +335,8 @@ class Transformer_Analytic(nn.Module):
         
         return W0, bias
 
-
+class BayesOpt:
+    pass
 
 # def get_wout(s, sd, y0, t,a0s,fs):
 
@@ -403,12 +411,12 @@ class Transformer_Analytic(nn.Module):
 #     # return W0
 import matplotlib.pyplot as plt
 
-if args.viz:
-    fig = plt.figure(figsize=(12, 4), facecolor='white')
-    ax_traj = fig.add_subplot(131, frameon=False)
-    ax_phase = fig.add_subplot(132, frameon=False)
-    ax_vecfield = fig.add_subplot(133, frameon=False)
-    plt.show(block=False)
+# if args.viz:
+#     fig = plt.figure(figsize=(12, 4), facecolor='white')
+#     ax_traj = fig.add_subplot(131, frameon=False)
+#     ax_phase = fig.add_subplot(132, frameon=False)
+#     ax_vecfield = fig.add_subplot(133, frameon=False)
+#     plt.show(block=False)
 
 def visualize(tv, true_y, pred_y, lst = None):
     
@@ -473,30 +481,33 @@ f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_f
 f_train = [torch.sin, torch.cos, lambda t: t, lambda t: torch.ones_like(t), lambda t: 1+ t, lambda t: torch.exp(-t)* torch.sin(t)] +[ f_generator.realize_recursive() for _ in range(3)] 
     
 
-def optimize(ic_train_range, ic_test_range):
+def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e-3, args = None, gamma = 0.5):
+
+    #assert False, f'{kwargs} kwargs'
+    # for key, val in kwargs.items():
+    #     if key != 'self':
+    #         locals()[key] = val
+
+    #globals()["args"] = args
+    scaler = MinMaxScaler()
+    args_ = SimpleNamespace(**args)
+    args = args_
 
     ic_train_range = [int(num) for num in ic_train_range]
     ic_test_range = [int(num) for num in ic_test_range]
-    # args = Args()
     
-    # args.assign(locals())
-    # args = args
-    #assert False, args.__dict__
-    # print(f' bias_at_inference {not no_bias_at_inference}, ridge {ridge}')
-    # print(f' bias_at_inference {ffnn_bias}, ridge {ridge}')
-    if args.wout == 'analytic':
-        wout_gen = Transformer_Analytic(regularization, no_bias_at_inference)
+    if args_.wout == 'analytic':
+        wout_gen = Transformer_Analytic(args.regularization, args.no_bias_at_inference)
         #wout_gen = Transformer_Analytic(a0, a1, f, regularization)
-        
-        
     
-    dt=tmax/n_timepoints
-    args.dt = dt
+    dt=args.tmax/args.n_timepoints
+
+    hidden_size = int(hidden_size)
     
-    if not random_sampling:
+    if not args.random_sampling:
         t = torch.arange(0.,args.tmax,args.dt)
     else:
-        t = torch.rand(n_timepoints) *tmax
+        t = torch.rand(args.n_timepoints) * args.tmax
         t = t.sort().values
     
     t = t.reshape(-1,1)
@@ -504,10 +515,10 @@ def optimize(ic_train_range, ic_test_range):
     #assign_vars(compute_s_sdot, "t", t)
     
     
-    globals()["args"] = args
+    
     
     ii = 0
-    NDIMZ = args.hidden_size
+    NDIMZ = hidden_size
     # define coefficients as lambda functions, used for gt and wout_analytic
     # training differential equation
 
@@ -518,7 +529,7 @@ def optimize(ic_train_range, ic_test_range):
     hp2 = amplitude_range = 5
     hp3 = angular_freq_range = 3
 
-    num_forces = max(num_bundles//5, 1)
+    num_forces = max(args.num_bundles//5, 1)
 
     # f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
 
@@ -553,10 +564,10 @@ def optimize(ic_train_range, ic_test_range):
     # true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
 
     # instantiate wout with coefficients
-    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = ffnn_bias)
+    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = args.ffnn_bias)
 
-    optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma = 0.5)
+    optimizer = optim.Adam(func.parameters(), lr=lr, weight_decay=1e-6)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma = gamma)
 
     loss_collector = []
     if not "exp_name" in locals().keys():
@@ -580,11 +591,11 @@ def optimize(ic_train_range, ic_test_range):
     except:
         pass
 
-    filename = bp + "__num_bundles_"+  str(num_bundles) + "__num_forces_" + str(num_forces)
+    filename = bp + "__num_bundles_"+  str(args.num_bundles) + "__num_forces_" + str(num_forces)
     exp_name = filename  + ".pt"
 
     #if args.viz:
-    spikethreshold = 0.2
+    
 
 
     if not args.evaluate_only:
@@ -614,19 +625,46 @@ def optimize(ic_train_range, ic_test_range):
             # h = func.h(tv)# @ .weight.T
             # pred_y = func.lout(h)
 
+
             pred_y = func(tv)
-
+            #pred_ydot = diff(pred_y,tv)
             pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
-
-            #hd = diff(h, tv, grad_outputs = func.lout.weight.T)
-
-            #pred_ydot = hd @ func.lout.weight.T
-            #pred_ydot.retain_grad()
             
-            udot = get_udot(tv,pred_y,a0_samples,f_samples)
+            second_order = False
 
-            # enforce diffeq
-            loss_diffeq = pred_ydot - udot #get_udot(tv,pred_y,a0_samples,f_samples)
+            if not second_order:
+                
+                udot = get_udot(tv,pred_y,a0_samples,f_samples)
+                loss_diffeq = pred_ydot - udot 
+            else:
+            
+                pred_yddot = diff(pred_ydot,tv)
+
+                #enforce diffeq
+                loss_diffeq = pred_yddot + 1 * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
+
+
+
+            
+
+            # pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
+
+            # pred_ydot = diff(pred_y,tv)
+            # pred_yddot = diff(pred_ydot,tv)
+
+            # #enforce diffeq
+            # loss_diffeq = pred_yddot + (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
+
+
+            # #hd = diff(h, tv, grad_outputs = func.lout.weight.T)
+
+            # #pred_ydot = hd @ func.lout.weight.T
+            # #pred_ydot.retain_grad()
+            
+            # udot = get_udot(tv,pred_y,a0_samples,f_samples)
+
+            # # enforce diffeq
+            # loss_diffeq = pred_ydot - udot #get_udot(tv,pred_y,a0_samples,f_samples)
             # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
             #     tv.detach()).reshape(-1, 1)
 
@@ -721,7 +759,7 @@ def optimize(ic_train_range, ic_test_range):
     new_hiddens = scaler.fit_transform(gz_np)
     
 
-    if plot_pca or plot_tsne:
+    if args.plot_pca or args.plot_tsne:
 
         fig = plt.figure()
         ax = plt.axes(projection='3d')
@@ -729,8 +767,8 @@ def optimize(ic_train_range, ic_test_range):
 
 
         from sklearn.manifold import TSNE
-        if plot_tsne:
-            pca = PCA(n_components=plot_tsne)
+        if args.plot_tsne:
+            pca = PCA(n_components=args.plot_tsne)
         else:
             pca = PCA(n_components=3)
 
@@ -745,7 +783,7 @@ def optimize(ic_train_range, ic_test_range):
             s = 10  # Segment length
             for i in range(0, len(gz_np) - s, s):
 
-                if plot_tsne:
+                if args.plot_tsne:
                     ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
                               color=(0.1, 0.8, T[i]))
                 else:
@@ -778,23 +816,23 @@ def optimize(ic_train_range, ic_test_range):
     print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
     #rint(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
 
-    fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    # print(true_ys[0,:])
-    for i in range(0, args.num_bundles_test, 50):
-        gt = true_ys.cpu().numpy()[:, i]
-        preds = pred_y.cpu().numpy()[:, i]
-        ax[0].plot(t.detach().cpu().numpy(), gt, c='blue', linestyle='dashed')
-        ax[0].plot(t.detach().cpu().numpy(),  preds , c='orange')
-        # plt.draw()
+    # fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    # # print(true_ys[0,:])
+    # for i in range(0, args.num_bundles_test, 50):
+    #     gt = true_ys.cpu().numpy()[:, i]
+    #     preds = pred_y.cpu().numpy()[:, i]
+    #     ax[0].plot(t.detach().cpu().numpy(), gt, c='blue', linestyle='dashed')
+    #     ax[0].plot(t.detach().cpu().numpy(),  preds , c='orange')
+    #     # plt.draw()
 
-    ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
-    ax[1].set_xlabel('Time (s)')
+    # ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
+    # ax[1].set_xlabel('Time (s)')
     #plt.legend()
     #plt.show()
 
-    if args.save:
+    # if args.save:
 
-        fig.savefig(filename + "_pca")
+    #     fig.savefig(filename + "_pca")
     
     prediction_residuals = ((pred_y - true_ys) ** 2)
     #estimation_residuals = ((estim_ys - true_ys) ** 2)
@@ -803,6 +841,21 @@ def optimize(ic_train_range, ic_test_range):
 
 
 if __name__ == "__main__":
+    assert False, 'asdf'
+    parser = parser_args.parse_args_bundles_('transfer demo')
+    args = parser.parse_args()
+    locals().update(args.__dict__)
+
+    args = args.__dict__
+
+
+    opt_hps = {'lr': 0.00021174227329280387, 'hidden_size': int(294.01715087890625), 'spikethreshold': 2.4561667442321777}
+
+    for key in opt_hps.keys():
+        try:
+            del args[key]
+        except:
+            pass
 
     num_forces = 100
 
@@ -821,11 +874,11 @@ if __name__ == "__main__":
     if True:
         for n in [1]:#[1, 5, 10, 20, 50, 100, 500, 1000]:
 
-            assert ffnn_bias, 'asdf'
+            #assert ffnn_bias, 'asdf'
             #for ratio in [1, 2, 10]:#[1, 2, 10]:
             ratio = 1
             num_forces = max(n//ratio,1)
-            args.num_bundles = num_bundles = n
+            #args.num_bundles = num_bundles = n
 
             print(f'NUM BUNDLES: {num_bundles}')
             #assert False, f'{num_bundles/num_forces}' 
@@ -834,7 +887,7 @@ if __name__ == "__main__":
             results = {"models" : [], "scores" : [], "pred_ys" : [], "true_ys" : [], "loss" : [], "hs" : []}
             for i in range(1):
                 
-                model, score, pred_y, true_y, filename, loss_collector, h = optimize(ic_tr_range, ic_te_range)
+                model, score, pred_y, true_y, filename, loss_collector, h = optimize(ic_tr_range, ic_te_range, **opt_hps, args = args)
                 results["models"].append(model)
                 results["scores"].append(score)
                 results["pred_ys"].append(pred_y)
@@ -848,4 +901,4 @@ if __name__ == "__main__":
             # df2 = pd.read_pickle(filename + '.pickle')
             # print(df2)
 
-    
+#     

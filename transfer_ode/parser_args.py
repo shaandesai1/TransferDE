@@ -33,9 +33,9 @@ def parse_args_(str_):
 def parse_args_bundles_(str_):
 	parser = parse_args_(str_)
 	parser.add_argument('--niters_test', type = int, default =15000)
-	parser.add_argument('--num_bundles', type =int, default= 20)
+	parser.add_argument('--num_bundles', type =int, default= 10)
 	parser.add_argument('--l1_reg_strength', type = int, default = 0)
-	parser.add_argument('--num_bundles_test', type = int, default = 400)
+	parser.add_argument('--num_bundles_test', type = int, default = 100)
 	#parser.add_argument('--test_freq', type = int, default = 10)
 	
 	parser.add_argument('--ffnn_bias', action = 'store_false')

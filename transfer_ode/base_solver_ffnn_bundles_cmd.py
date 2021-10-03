@@ -39,6 +39,8 @@ if __name__ == '__main__':
     # true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
 
     # instantiate wout with coefficients
+
+    print("NDIMZ", NDIMZ)
     func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles)
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3, weight_decay=1e-6)
