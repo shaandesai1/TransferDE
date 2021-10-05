@@ -338,6 +338,7 @@ def execute_objective(parallel_arguments, parameters, X_turbo_spec, trust_region
 
     (we need the job id to resort and relate X and y for BO Opt which have been scrambled by multiprocessing)
     """
+    args["save"] = self.save
 
     model, score, pred_y, true_y, filename, loss_collector, h = tode_base.optimize(args["ic_tr_range"], 
                                                                                    args["ic_te_range"], 
@@ -402,7 +403,8 @@ class Turbo_Bayes:
                  n_trust_regions = None,
                  cv_samples = 1,
                  max_evals = 30,
-                 store_path = None
+                 store_path = None,
+                 save = False
 
                  ):
         for key, val in locals().items():
@@ -584,7 +586,7 @@ class Turbo_Bayes:
 
         self.log_vars = ['connectivity', 'llambda', 'llambda2', 'enet_strength',
                          'noise', 'regularization', 'dt', 'gamma_cyclic', 'sigma',
-                         'lr'
+                         'lr', 'optimizer_loss_shift'
                          #'input_connectivity', 'feedback_connectivity'
                          ]
 
@@ -823,6 +825,9 @@ class Turbo_Bayes:
                 assert len(self._idx) == len(self.Y_turbo)
 
             self.n_evals += self.turbo_batch_size * self.n_trust_regions
+
+            pct_complete = self.n_evals//self.max_evals
+            print(f'progress: {pct_complete}%')
 
             #check if states need to be restarted
             for i, state in self.states.items():
@@ -1087,8 +1092,6 @@ class Turbo_Bayes:
         self._errorz["all"] = []
         for i in range(self.n_trust_regions):
             self._errorz[i], self._errorz_step[i], self._length_progress[i] = [], [], []
-
-
         
         best_hyper_parameters = self._turbo_m()
 
@@ -1120,12 +1123,16 @@ class Turbo_Bayes:
 
 __name__ = "__main__"
 if __name__ == "__main__":
-    print("MAINE! AUGUSTA")
 
-    bounds = {"lr" : (-4, -2), 
+    bounds = {"lr" : (-4, -1), 
               "hidden_size" : (100, 300),
-              "spikethreshold" : (0.1, 10),
-              "gamma" : (0.02, 1)}
+              "spikethreshold" : 0.9,#(0.05, 1),
+              "gamma" : 0.95, #(0.05, 1),
+              "activation_number" : (0,3),
+              "n_layers" : (1,4),
+              "momentum_gamma" : (0.05,1),
+              "optimizer_loss_shift" : (-5, -2),
+              "gamma_cyclic" : 0}#(float(np.log10(0.98)), float(np.log10(0.99999)))}
 
     flag = 0
     # if not flag

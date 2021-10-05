@@ -29,10 +29,10 @@ from types import SimpleNamespace
 
 
 
-if sys.stdin and sys.stdin.isatty():
-    print("iteractive")
-else:
-    print("not interactive")
+# if sys.stdin and sys.stdin.isatty():
+#     print("iteractive")
+# else:
+#     print("not interactive")
 
 
 
@@ -92,6 +92,21 @@ def get_udot(t,y,a,f):
     yd = (-a0 * y + f0)
     return yd
 
+def get_udot_2(t,y,yd,a1,a0,f):
+
+    #a1 is 1
+    # print(t.dim())
+    if y.shape[0] <=1:
+        a1s = torch.tensor([a_(t) for a_ in a1]).reshape(1, -1)
+        a0s = torch.tensor([a_(t) for a_ in a0]).reshape(1,-1)
+        f0s = torch.tensor([f_(t) for f_ in f]).reshape(1,-1)
+    else:
+        a1s = torch.cat([a_(t) for a_ in a1], 1)
+        a0s = torch.cat([a_(t) for a_ in a0],1)
+        f0s = torch.cat([f_(t) for f_ in f],1)
+
+    ydd = (-a1s*yd -a0s * y + f0s)
+    return ydd
 
 class base_diffeq:
     """
@@ -136,14 +151,29 @@ class ODEFunc(nn.Module):
     function to learn the outputs u(t) and hidden states h(t) s.t. u(t) = h(t)W_out
     """
 
-    def __init__(self, hidden_dim, output_dim, calc_bias):
+    def __init__(self, hidden_dim, output_dim, calc_bias,
+                 activation_number, n_layers):
         super(ODEFunc, self).__init__()
         self.hdim = hidden_dim
-        self.nl = nn.Tanh()
+
+        #activation_number \in [0,1] [1,2]. [2, 3]
+        if activation_number > 2:
+            self.nl = nn.Tanh()
+        elif activation_number > 1:
+            self.nl = nn.Sigmoid()
+        else:
+            self.nl = torch.sin
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
+        self.lin3 = nn.Linear(self.hdim, self.hdim)
         self.lout = nn.Linear(self.hdim, output_dim, bias = calc_bias)
 
+        if n_layers > 3:
+            self.h = self.h3
+        elif n_layers > 2:
+            self.h = self.h2
+        else:
+            self.h = self.h1
     def forward(self, t):
         self.h_ = x = self.h(t)
         #self.h_.retain_grad()
@@ -153,10 +183,24 @@ class ODEFunc(nn.Module):
     def wouts(self, x):
         return self.lout(x)
 
-    def h(self, t):
+    def h2(self, t):
         x = self.lin1(t)
         x = self.nl(x)
         x = self.lin2(x)
+        x = self.nl(x)
+        return x
+
+    def h1(self, t):
+        x = self.lin1(t)
+        x = self.nl(x)
+        return x
+
+    def h3(self, t):
+        x = self.lin1(t)
+        x = self.nl(x)
+        x = self.lin2(x)
+        x = self.nl(x)
+        x = self.lin3(x)
         x = self.nl(x)
         return x
 
@@ -269,7 +313,17 @@ class Transformer_Analytic(nn.Module):
             try:
                 W0 = torch.linalg.solve(LHS, -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
             except:
-                W0 = torch.linalg.solve(LHS + 1e-3*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+                try:
+                    W0 = torch.linalg.solve(LHS + 1e-3*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+                except:
+                    try:
+                        W0 = torch.linalg.solve(LHS + 1e-2*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+                    except:
+                        try:
+                            W0 = torch.linalg.solve(LHS + 1e-1*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
+                        except:
+
+                            W0 = torch.linalg.solve(LHS**1.5 + 1e-3*torch.eye(LHS.shape[0]), -DH.t() @ D0 + h0m @ (y0[0, :].reshape(1, -1)))
 
 
             if self.calc_bias:
@@ -481,12 +535,16 @@ f_generator = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_f
 f_train = [torch.sin, torch.cos, lambda t: t, lambda t: torch.ones_like(t), lambda t: 1+ t, lambda t: torch.exp(-t)* torch.sin(t)] +[ f_generator.realize_recursive() for _ in range(3)] 
     
 
-def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e-3, args = None, gamma = 0.5):
+def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e-3, args = None, gamma = 0.5, 
+             activation_number = 2.5, n_layers = 2.5, inference = False, optimizer_loss_shift = 1e-3, momentum_gamma = 0, 
+             momentum_decay = 1e-5, sgd_decay = 1e-5, random_seed = 109, gamma_cyclic = None):
 
     #assert False, f'{kwargs} kwargs'
     # for key, val in kwargs.items():
     #     if key != 'self':
     #         locals()[key] = val
+    rng = np.random.RandomState(random_seed)
+
 
     #globals()["args"] = args
     scaler = MinMaxScaler()
@@ -513,8 +571,7 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
     t = t.reshape(-1,1)
     
     #assign_vars(compute_s_sdot, "t", t)
-    
-    
+    a1_train = [lambda z: torch.ones_like(z)]#[lambda z: 0 * z,  lambda z: z ** 2, lambda z: z ** 3]
     
     
     ii = 0
@@ -551,9 +608,13 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
     t.requires_grad = True
 
     # sample each parameter to build the tuples
-    f_samples = random.choices(f_train, k=args.num_bundles)
-    a0_samples = random.choices(a0_train, k=args.num_bundles)
-    y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles)).reshape(1,-1)
+    f_samples = rng.choice(f_train, size=args.num_bundles)
+    a0_samples = rng.choice(a0_train, size=args.num_bundles)
+    hi = a0_samples[0]
+    print("a0 test:", hi(torch.tensor(2)))
+    time.sleep(4)
+    a1_samples = rng.choice(a1_train, size=args.num_bundles)
+    y0_samples = torch.tensor(rng.choice(true_y0, size=args.num_bundles)).reshape(1,-1)
 
     diffeq_init = diffeq(a0_samples,f_samples)
     gt_generator = base_diffeq(diffeq_init)
@@ -564,7 +625,8 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
     # true_y = gt_generator.get_solution(true_y0.reshape(-1, 1), t.ravel())
 
     # instantiate wout with coefficients
-    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = args.ffnn_bias)
+    func = ODEFunc(hidden_dim=NDIMZ, output_dim=args.num_bundles, calc_bias = args.ffnn_bias, 
+                   activation_number = activation_number, n_layers = n_layers)
 
     optimizer = optim.Adam(func.parameters(), lr=lr, weight_decay=1e-6)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma = gamma)
@@ -595,12 +657,19 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
     exp_name = filename  + ".pt"
 
     #if args.viz:
-    
+    sgd_activated = False
+
+
 
 
     if not args.evaluate_only:
         best_residual = np.inf
         lrs = []
+
+        if gamma_cyclic:
+                cyclic_scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, 10**-6, 0.01,
+                                            gamma = gamma_cyclic,
+                                            mode = "exp_range", cycle_momentum = False)
 
         for itr in range(1, args.niters + 1):
             func.train()
@@ -628,23 +697,33 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
 
             pred_y = func(tv)
             #pred_ydot = diff(pred_y,tv)
-            pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
+            
             
             second_order = False
 
             if not second_order:
-                
+                pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
                 udot = get_udot(tv,pred_y,a0_samples,f_samples)
+
+
+
                 loss_diffeq = pred_ydot - udot 
+                #loss_ics = torch.mean((pred_y[0, :].ravel() - y0_samples[:,0].ravel())**2) + torch.mean((pred_ydot[0,:].ravel()-y0_samples[:,1].ravel())**2)
+
             else:
-            
-                pred_yddot = diff(pred_ydot,tv)
+                pred_ydot = diff(pred_y,tv, grad_outputs = func.lout.weight.T)
+                
+                pred_yddot = diff(pred_ydot,tv, grad_outputs = func.lout.weight.T)
+
+                udot = get_udot_2(tv,pred_y,pred_ydot,a1_samples,a0_samples,f_samples)
 
                 #enforce diffeq
-                loss_diffeq = pred_yddot + 1 * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(tv.detach()).reshape(-1, 1)
-
-
-
+                loss_diffeq = pred_yddot - udot
+            
+            loss_ics = torch.mean((pred_y[0, :].ravel() - y0_samples[:,0].ravel())**2) + torch.mean((pred_ydot[0,:].ravel()-y0_samples[:,1].ravel())**2)
+            
+            # enforce initial conditions
+            
             
 
             # pred_ydot = diff(pred_y, tv, grad_outputs = func.lout.weight.T)
@@ -683,6 +762,13 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
 
             loss_collector.append(L3)
 
+            if itr < 1000:
+                    cyclic_scheduler.step()
+                    lrs.append(optimizer.param_groups[0]["lr"])
+
+
+            
+
             if itr % args.test_freq == 0:
                 func.eval()
 
@@ -696,17 +782,39 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
                 ii += 1
 
                 current_residual = torch.mean((pred_ydot - udot)**2)
-                #print(current_residual.item())
+
+                
+
+                
                 if current_residual < best_residual:
                     #print("saving")
+                    print(f'iteration {itr}, {np.log10(current_residual.item()):0.2f}')
 
                     torch.save(func.state_dict(), 'func_ffnn_bundles')
                     best_residual = current_residual
-                    print(itr,best_residual.item())
-                elif itr > 1: 
-                    if np.log(float(prev_step_loss))  - np.log(float(L1)) > spikethreshold:
-                        lrs.append(optimizer.param_groups[0]["lr"])
-                        scheduler.step()
+                    
+                    if not sgd_activated :
+                        #change the optimizer to sgd if the threshold has been hit.
+                        if best_residual < optimizer_loss_shift:
+                            print("CHANGING OPTIMIZER")
+
+                            new_learning_rate = optimizer.param_groups[0]["lr"]
+                            optimizer = torch.optim.SGD(func.parameters(), new_learning_rate, momentum = 0.9)
+                            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size = 1, gamma = gamma)
+                            sgd_activated = True
+
+            if itr > 1: 
+                #print("L1" , L1)
+                #print("prev step loss", prev_step_loss)
+                time.sleep
+                if (np.log10(float(prev_step_loss))  - np.log10(float(L1))) > spikethreshold:
+                    lrs.append(optimizer.param_groups[0]["lr"])
+                    if sgd_activated:
+                        for g in optimizer.param_groups:
+                            g['momentum'] *= momentum_gamma
+
+                            
+                    scheduler.step()
 
             prev_step_loss = float(L1)
             # if itr % args.test_freq == 0:
@@ -717,127 +825,111 @@ def optimize(ic_train_range, ic_test_range, hidden_size, spikethreshold, lr = 1e
             #     #     visualize(t, true_y.detach(), pred_y.detach(), loss_collector)
             #     ii += 1
         #print("saving", func.state_dict() )
-        torch.save(func.state_dict(), exp_name)
+        #assert False, f'args.save: {args.save}'
+        if args.save:
+            torch.save(func.state_dict(), exp_name)
 
-    # with torch.no_grad():
-    scale_factor = 1.2
-    hp1, hp2, hp3 = [hp *scale_factor for hp in [hp1, hp2, hp3]]
+    if not inference:
+        score = best_residual
+        true_ys = None
+        h = None
+        return func.state_dict(), score, pred_y, true_ys, filename, loss_collector, h
+    elif inference:
+        # with torch.no_grad():
+        scale_factor = 1.2
+        hp1, hp2, hp3 = [hp *scale_factor for hp in [hp1, hp2, hp3]]
 
-    #wave_gen_test = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
+        #wave_gen_test = f_gen.Wave_Gen(phase_shift = hp1, amplitude_range = hp2, angular_freq_range =hp3)
 
-    f_test = f_train#[ wave_gen_test.realize_recursive() for _ in range(num_bundles_test)] #[lambda t: torch.sin(t)*torch.cos(t)]+
-    a0_test = a0_train #
-    r1 = ic_test_range[0]
-    r2 = ic_test_range[1]
-    true_y0 = (r2 - r1) * torch.rand(100) + r1
-    t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
-    t.requires_grad = True
+        f_test = f_train#[ wave_gen_test.realize_recursive() for _ in range(num_bundles_test)] #[lambda t: torch.sin(t)*torch.cos(t)]+
+        a0_test = a0_train #
+        r1 = ic_test_range[0]
+        r2 = ic_test_range[1]
+        true_y0 = (r2 - r1) * torch.rand(100) + r1
+        t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
+        t.requires_grad = True
 
-    # sample each parameter to build the tuples
-    f_samples = random.choices(f_test, k=args.num_bundles_test)
-    a0_samples = random.choices(a0_test, k=args.num_bundles_test)
-    y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles_test)).reshape(1, -1)
+        # sample each parameter to build the tuples
+        f_samples = random.choices(f_test, k=args.num_bundles_test)
+        a0_samples = random.choices(a0_test, k=args.num_bundles_test)
+        y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles_test)).reshape(1, -1)
 
-    # print(y0_samples.shape)
-    diffeq_init = diffeq(a0_samples, f_samples)
-    gt_generator = base_diffeq(diffeq_init)
-
-    
-
-    if not args.save:
-        func.load_state_dict(torch.load(exp_name ))
-    func.eval()
-
-    h = func.h(t)
-
-    hd = diff(h, t)
-    h = h.detach()
-    hd = hd.detach()
-
-    gz_np = h.detach().numpy()
-    T = np.linspace(0, 1, len(gz_np)) ** 2
-    new_hiddens = scaler.fit_transform(gz_np)
-    
-
-    if args.plot_pca or args.plot_tsne:
-
-        fig = plt.figure()
-        ax = plt.axes(projection='3d')
-
-
-
-        from sklearn.manifold import TSNE
-        if args.plot_tsne:
-            pca = PCA(n_components=args.plot_tsne)
-        else:
-            pca = PCA(n_components=3)
-
-        comps = pca.fit_transform(new_hiddens)
-
-        if plot_tsne:
-            comps = TSNE(n_components=3).fit_transform(comps)
-            comps = comps[comps[:, 0].argsort()]
+        # print(y0_samples.shape)
+        diffeq_init = diffeq(a0_samples, f_samples)
+        gt_generator = base_diffeq(diffeq_init)
 
         
-        if comps.shape[1] >= 2:
-            s = 10  # Segment length
-            for i in range(0, len(gz_np) - s, s):
 
-                if args.plot_tsne:
-                    ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
-                              color=(0.1, 0.8, T[i]))
-                else:
+        if args.save:
+            func.load_state_dict(torch.load(exp_name ))
+        func.eval()
 
-                    ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
-                              color=(0.1, 0.8, T[i]))
-                plt.xlabel('comp1')
-                plt.ylabel('comp2')
+        h = func.h(t)
+
+        hd = diff(h, t)
+        h = h.detach()
+        hd = hd.detach()
+
+        if args.plot_pca or args.plot_tsne:
+            gz_np = h.detach().numpy()
+            T = np.linspace(0, 1, len(gz_np)) ** 2
+            new_hiddens = scaler.fit_transform(gz_np)
+
+            fig = plt.figure()
+            ax = plt.axes(projection='3d')
+
+
+
+            from sklearn.manifold import TSNE
+            if args.plot_tsne:
+                pca = PCA(n_components=args.plot_tsne)
+            else:
+                pca = PCA(n_components=3)
+
+            comps = pca.fit_transform(new_hiddens)
+
+            if plot_tsne:
+                comps = TSNE(n_components=3).fit_transform(comps)
+                comps = comps[comps[:, 0].argsort()]
+
             
+            if comps.shape[1] >= 2:
+                s = 10  # Segment length
+                for i in range(0, len(gz_np) - s, s):
 
-    s1 = time.time()
+                    if args.plot_tsne:
+                        ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
+                                  color=(0.1, 0.8, T[i]))
+                    else:
 
-    wout, bias = wout_gen.get_wout(h, hd, y0_samples, t.detach(), a0_samples, f_samples)
-    pred_y = h @ wout + bias
+                        ax.plot3D(comps[i:i + s + 1, 0], comps[i:i + s + 1, 1], comps[i:i + s + 1, 2],
+                                  color=(0.1, 0.8, T[i]))
+                    plt.xlabel('comp1')
+                    plt.ylabel('comp2')
+                
 
-    s2 = time.time()
-    print(f'all_ics:{s2 - s1}')
+        s1 = time.time()
 
-    s1 = time.time()
-    true_ys = (gt_generator.get_solution(y0_samples, t.ravel())).reshape(-1, args.num_bundles_test)
-    s2 = time.time()
-    print(f'gt_ics:{s2 - s1}')
+        wout, bias = wout_gen.get_wout(h, hd, y0_samples, t.detach(), a0_samples, f_samples)
+        pred_y = h @ wout + bias
 
-    # s1 = time.time()
-    # true_y = estim_generator.get_solution(ics.reshape(-1, 1), t.ravel())
-    # estim_ys = true_y.reshape(len(pred_y), ics.shape[1])
-    # s2 = time.time()
-    # print(f'estim_ics:{s2 - s1}')
+        s2 = time.time()
 
-    print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
-    #rint(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
+        true_ys = (gt_generator.get_solution(y0_samples, t.ravel())).reshape(-1, args.num_bundles_test)
+        s3 = time.time()
+        
 
-    # fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-    # # print(true_ys[0,:])
-    # for i in range(0, args.num_bundles_test, 50):
-    #     gt = true_ys.cpu().numpy()[:, i]
-    #     preds = pred_y.cpu().numpy()[:, i]
-    #     ax[0].plot(t.detach().cpu().numpy(), gt, c='blue', linestyle='dashed')
-    #     ax[0].plot(t.detach().cpu().numpy(),  preds , c='orange')
-    #     # plt.draw()
+        # if args.save:
 
-    # ax[1].plot(t.detach().cpu().numpy(), ((true_ys - pred_y) ** 2).mean(1).cpu().numpy(), c='green')
-    # ax[1].set_xlabel('Time (s)')
-    #plt.legend()
-    #plt.show()
+        #     fig.savefig(filename + "_pca")
+        
+        prediction_residuals = ((pred_y - true_ys) ** 2)
+        #estimation_residuals = ((estim_ys - true_ys) ** 2)
+        score = prediction_residuals.mean()
+        
+        print(f'acc: {np.log10(score):.2f}, TIME: all_ics:{s2 - s1:.2f} gt_ics:{s3 - s2:.2f}')
 
-    # if args.save:
-
-    #     fig.savefig(filename + "_pca")
-    
-    prediction_residuals = ((pred_y - true_ys) ** 2)
-    #estimation_residuals = ((estim_ys - true_ys) ** 2)
-    score = prediction_residuals.mean()
-    return func.state_dict(), score, pred_y, true_ys, filename, loss_collector, h
+        return func.state_dict(), score, pred_y, true_ys, filename, loss_collector, h
 
 
 if __name__ == "__main__":

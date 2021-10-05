@@ -13,7 +13,7 @@ def parse_args_(str_):
 	parser.add_argument('--niters', type=int, default=1000)
 	parser.add_argument('--hidden_size', type=int, default=200)
 
-	parser.add_argument('--test_freq', type=int, default=10)
+	parser.add_argument('--test_freq', type=int, default=1)
 
 	parser.add_argument('--viz', action='store_false')
 	parser.add_argument('--gpu', type=int, default=0)
