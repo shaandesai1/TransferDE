@@ -1126,7 +1126,7 @@ if __name__ == "__main__":
 
     bounds = {"lr" : (-4, -1), 
               "hidden_size" : (100, 300),
-              "spikethreshold" : 0.9,#(0.05, 1),
+              "spikethreshold" : 100,#(0.05, 1),
               "gamma" : 0.95, #(0.05, 1),
               "activation_number" : (0,3),
               "n_layers" : (1,4),
