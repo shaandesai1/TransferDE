@@ -140,6 +140,10 @@ class Transformer_Analytic(nn.Module):
     def get_wout(self, func,t,x,grid_t,grid_x):
 
         # print('enter wout')
+        zindices = np.random.choice(len(t), 200, replace=False)
+        # print(zindices)
+        t = t[zindices, :].reshape(-1, 1)
+        x = x[zindices, :].reshape(-1, 1)
         # s1=time.time()
         H = func.hidden_states(t,x)
         # s2 = time.time()

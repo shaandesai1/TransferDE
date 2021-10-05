@@ -7,6 +7,7 @@ import argparse
 import torch.optim as optim
 import numpy as np
 import time
+import seaborn as sns
 
 torch.manual_seed(33)
 
@@ -14,7 +15,7 @@ parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
-parser.add_argument('--niters', type=int, default=20000)
+parser.add_argument('--niters', type=int, default=40000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_ics', type=int, default=1)
@@ -27,7 +28,10 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
 import matplotlib.pyplot as plt
 args = parser.parse_args()
-from torchdiffeq import odeint_adjoint as odeint
+# from torchdiffeq import odeint_adjoint as odeint
+
+# torch.set_default_tensor_type('torch.cuda.FloatTensor')
+# torch.backends.cudnn.benchmark = True
 
 
 
@@ -153,7 +157,7 @@ class Transformer_Analytic(nn.Module):
             return torch.cat([var,torch.zeros(len(var),1)],1)
     def get_wout(self, func,t,x,grid_t,grid_x,ks):
 
-        zindices = np.random.choice(len(t), 200)
+        zindices = np.random.choice(len(t), 500,replace=False)
         # print(zindices)
         t = t[zindices, :].reshape(-1, 1)
         x = x[zindices, :].reshape(-1, 1)
@@ -177,24 +181,38 @@ class Transformer_Analytic(nn.Module):
 
         DH = (d2Hdt2+d2Hdx2)
 
-        H0 = func.hidden_states(grid_t[:,0].reshape(-1,1),grid_x[:,0].reshape(-1,1))
+
+        xindices = np.random.choice(len(grid_t),100,replace=False)
+
+        H0 = func.hidden_states(grid_t[xindices,0].reshape(-1,1),grid_x[xindices,0].reshape(-1,1))
         H0 = self.append_ones(H0)
 
-        HT = func.hidden_states(grid_t[:, -1].reshape(-1, 1), grid_x[:, -1].reshape(-1, 1))
+        HT = func.hidden_states(grid_t[xindices, -1].reshape(-1, 1), grid_x[xindices, -1].reshape(-1, 1))
         HT = self.append_ones(HT)
 
-        HL = func.hidden_states(grid_t[0,:].reshape(-1,1),grid_x[0,:].reshape(-1,1))
+        HL = func.hidden_states(grid_t[0,xindices].reshape(-1,1),grid_x[0,xindices].reshape(-1,1))
         HL = self.append_ones(HL)
-        HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), grid_x[-1, :].reshape(-1, 1))
+        HR = func.hidden_states(grid_t[-1, xindices].reshape(-1, 1), grid_x[-1, xindices].reshape(-1, 1))
         HR = self.append_ones(HR)
 
-        BB = self.bb(grid_x[:,0]).reshape(-1,1)
-        TB = self.tb(grid_x[:, -1]).reshape(-1, 1)
-        BL = self.lbc(grid_t[0,:]).reshape(-1,1)
-        BR = self.rbc(grid_t[-1,:]).reshape(-1,1)
+        BB = self.bb(grid_x[xindices,0]).reshape(-1,1)
+        TB = self.tb(grid_x[xindices, -1]).reshape(-1, 1)
+        BL = self.lbc(grid_t[0,xindices]).reshape(-1,1)
+        BR = self.rbc(grid_t[-1,xindices]).reshape(-1,1)
 
-        W0 = torch.linalg.solve(DH.t() @ DH  + H0.t()@H0 +HT.t()@HT + HL.t()@HL+HR.t()@HR, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
-        return W0,d2Hdt2,d2Hdx2
+        LHS = DH.t() @ DH +torch.eye(len(DH.t()))+ H0.t() @ H0 + HT.t() @ HT + HL.t() @ HL + HR.t() @ HR
+        RHS = DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR
+        # print(torch.linalg.cond(LHS))
+
+        W0solve = torch.linalg.solve(LHS, RHS)
+        # return W0,d2Hdt2,d2Hdx2
+
+        new_mat_A = torch.cat([DH,H0,HT,HL,HR],0)
+        new_mat_Y = torch.cat([rho,torch.ones(len(H0),1)*0,torch.ones(len(HT),1)*0,torch.ones(len(HL),1)*0,torch.ones(len(HR),1)*0],0)
+        W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        return W0.solution,W0solve
+
+
 
 
 
@@ -285,7 +303,7 @@ if __name__ == '__main__':
     grid_t.requires_grad = True
 
     # print(grid_t[:,0], grid_x[:,0])
-    print(grid_x)
+    # print(grid_x)
     grid_x = torch.ravel(grid_x)
     grid_t = torch.ravel(grid_t)
 
@@ -301,7 +319,7 @@ if __name__ == '__main__':
     ic_t0.requires_grad=True
     ic_tmax.requires_grad=True
     # wout_gen = Transformer_Analytic()
-    func = ODEFunc(hidden_dim=NDIMZ,output_dim=3)
+    func = ODEFunc(hidden_dim=NDIMZ,output_dim=4)
     optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
     center_xs = torch.tensor([[1.,1.],[2.,2.],[3.,3.],[4.,4.],[1.,1.]])#(10.+10.)*torch.rand(5,2) + -10.
@@ -328,12 +346,12 @@ if __name__ == '__main__':
             rho1 = get_rho(t_tr,x_tr,center_xs[0,0],center_ys[0,0],center_xs[0,1],center_ys[0,1])
             rho2 = get_rho(t_tr, x_tr, center_xs[1,0],center_ys[1,0],center_xs[1,1],center_ys[1,1])
             rho3 = get_rho(t_tr, x_tr, center_xs[2,0],center_ys[2,0],center_xs[2,1],center_ys[2,1])
-            # rho4 = get_rho(t_tr, x_tr, center_xs[3,0],center_ys[3,0],center_xs[3,1],center_ys[3,1])
+            rho4 = get_rho(t_tr, x_tr, center_xs[3,0],center_ys[3,0],center_xs[3,1],center_ys[3,1])
             # rho5 = get_rho(t_tr, x_tr, center_xs[4,0],center_ys[4,0],center_xs[4,1],center_ys[4,1])
 
             # print(u.shape,rho1.shape)
 
-            rhos = torch.cat([rho1,rho2,rho3],1)
+            rhos = torch.cat([rho1,rho2,rho3,rho4],1)
 
 
             loss_diffeq = torch.mean((d2udt2 + d2udx2 -rhos)**2)
@@ -365,15 +383,15 @@ if __name__ == '__main__':
                 d2udt2.detach_()
                 d2udx2.detach_()
 
-                visualize(u_eval,y_evals,x_evals,grid_t,grid_x, loss_collector)
+                # visualize(u_eval,y_evals,x_evals,grid_t,grid_x, loss_collector)
 
                 rho1 = get_rho(tvals, xvals, center_xs[0, 0], center_ys[0, 0], center_xs[0, 1], center_ys[0, 1])
                 rho2 = get_rho(tvals, xvals, center_xs[1, 0], center_ys[1, 0], center_xs[1, 1], center_ys[1, 1])
                 rho3 = get_rho(tvals, xvals, center_xs[2, 0], center_ys[2, 0], center_xs[2, 1], center_ys[2, 1])
-                # rho4 = get_rho(tvals, xvals, center_xs[3, 0], center_ys[3, 0], center_xs[3, 1], center_ys[3, 1])
+                rho4 = get_rho(tvals, xvals, center_xs[3, 0], center_ys[3, 0], center_xs[3, 1], center_ys[3, 1])
                 # rho5 = get_rho(tvals, xvals, center_xs[4, 0], center_ys[4, 0], center_xs[4, 1], center_ys[4, 1])
 
-                rhos = torch.cat([rho1, rho2, rho3], 1)
+                rhos = torch.cat([rho1, rho2, rho3,rho4], 1)
 
                 loss_diffeq = torch.mean((d2udt2 + d2udx2 -rhos)**2)
                 #
@@ -386,22 +404,33 @@ if __name__ == '__main__':
         # torch.save(func.state_dict(), 'func_ffnn_helm_2')
 
     # with torch.no_grad():
-    rho = lambda v1,v2: get_rho(v1,v2,2.,0.,2.,0) #+ get_rho(v1,v2,2.,0.,2.,0.) - get_rho(v1,v2,3.,0,3.,0)#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/3. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/3. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/3.#+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
+    # rho = lambda v1,v2: get_rho(v1,v2,4.,0,4.,0)#get_rho(v1,v2,1,0,3,0)#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
+    rho = lambda v1,v2: (-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
+
     ft = lambda t: 0*t#3*torch.sin(t)
     fb = lambda t: 0*t#torch.sin(t)
     lbc = lambda t: 0*t#torch.sin(t)
     rbc = lambda t: 0*t#torch.cos(t)
 
+    sns.axes_style(style='ticks')
+    sns.set_context("paper", font_scale=2,
+                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                        'lines.linewidth': 2})
+    sns.set_palette('deep')
+
+
     wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,rho)
 
-    func.load_state_dict(torch.load('func_ffnn_helm_2'))
+    func.load_state_dict(torch.load('func_ffnn_helm_2',map_location=torch.device('cpu')))
     func.eval()
 
-    x_evals = torch.linspace(xl, xr, 100)
-    y_evals = torch.linspace(t0, tmax, 100)
+    x_evals = torch.linspace(xl, xr, 200)
+    y_evals = torch.linspace(t0, tmax, 200)
     x_evals.requires_grad = True
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
+
+
     # grid_x.requires_grad = True
     # grid_t.requires_grad = True
 
@@ -409,28 +438,67 @@ if __name__ == '__main__':
     kval = torch.tensor(0.)
     # print(grid_t[:,0], grid_x[:,0])
 
-    grid_xx = grid_x.ravel()
-    grid_tt = grid_t.ravel()
+    x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
+    y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
+    x_evals1.requires_grad = True
+    y_evals1.requires_grad = True
+    grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
 
-    WOUT,Htt,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,kval)
+    grid_xx = grid_x1.ravel()
+    grid_tt = grid_t1.ravel()
 
-    H = func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1))
+    WOUT,WOUT1 = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,kval)
+
+    tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
+
+    H = func.hidden_states(tv,xv)
+    # Htt = diff(H,tv,2)
+    # Hxx = diff(H,xv,2)
+
     H = torch.cat([H,torch.ones(len(H),1)],1)
-
-    # Htt = diff(H,grid_tt.reshape(-1,1),2)
-    # Hxx = diff(H,grid_xx.reshape(-1,1),2)
+    # Htt = torch.cat([Htt, torch.zeros(len(H), 1)], 1)
+    # Hxx = torch.cat([Hxx, torch.zeros(len(H), 1)], 1)
 
     with torch.no_grad():
         out_pred = (H@WOUT)
+        out_pred1 = (H@WOUT1)
         # print((out_pred))
-        # loss_test =Htt@WOUT + Hxx@WOUT -rho(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1))
-        # print(torch.mean(loss_test**2))
+        # loss_test =Htt@WOUT + Hxx@WOUT -rho(tv,xv)
+        # loss_test1 = Htt @ WOUT1 + Hxx @ WOUT1 - rho(tv, xv)
 
-        fig,ax = plt.subplots(1,3,figsize=(15,5))
+        plt.figure()
+        contours = plt.contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), 6, colors='black')
+        plt.clabel(contours, inline=True, fontsize=8)
+        plt.contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), alpha=0.9)
+        # fig.colorbar(pc,ax=ax[0])
+        plt.xlabel('x')
+        plt.ylabel('t')
+        plt.colorbar()
 
-        pc=ax[0].contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
-        ax[0].set_title('predicted solution')
-        fig.colorbar(pc, ax=ax[0])
+        plt.savefig('helm_2_qr.pdf',dpi=2400,bbox_inches='tight')
+
+        # fig, ax = plt.subplots(1,1, figsize=(10, 5))
+        plt.figure()
+        contours = plt.contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),levels= 8, colors='black')
+        plt.clabel(contours, inline=True, fontsize=6)
+        plt.contourf(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),alpha=0.9,levels=8)
+        # fig.colorbar(pc,ax=ax[0])
+        plt.xlabel('x')
+        plt.ylabel('t')
+        plt.colorbar()
+
+        # pc = ax[1].contour(x_evals, y_evals, (loss_test ** 2).reshape(len(x_evals), len(y_evals)).t(), 30)
+        # ax[1].set_xlabel('x')
+        # ax[1].set_ylabel('t')
+        # fig.colorbar(pc, ax=ax[1])
+
+        plt.savefig('helm_2_solver.pdf', dpi=2400, bbox_inches='tight')
+
+        # pc = ax[1].contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),20)
+        # # pc = ax[0].contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
+        #
+        # ax[1].set_title('predicted solution')
+        # fig.colorbar(pc, ax=ax[1])
 
         # u_true = 3*torch.sin(grid_xx) * torch.exp(-grid_tt)
         #
@@ -441,4 +509,4 @@ if __name__ == '__main__':
         # ax[2].set_title('residuals')
         # fig.colorbar(pc, ax=ax[2])
 
-        plt.show()
+        # plt.show()

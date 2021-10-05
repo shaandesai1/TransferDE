@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
-parser.add_argument('--niters', type=int, default=20000)
+parser.add_argument('--niters', type=int, default=40000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_bundles', type=int, default=5)
@@ -24,9 +24,13 @@ parser.add_argument('--bs', type=int, default=100)
 
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--evaluate_only', action='store_true')
 
 args = parser.parse_args()
+
+
+torch.set_default_tensor_type('torch.cuda.FloatTensor')
+torch.backends.cudnn.benchmark = True
 
 
 class SiLU(nn.Module):
@@ -206,8 +210,8 @@ if __name__ == '__main__':
     tmax = args.tmax
 
 
-    x_evals = torch.linspace(xl,xr,50)
-    y_evals = torch.linspace(t0,tmax,50)
+    x_evals = torch.linspace(xl,xr,100)
+    y_evals = torch.linspace(t0,tmax,100)
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
     grid_x.requires_grad = True
     grid_t.requires_grad = True
@@ -219,8 +223,8 @@ if __name__ == '__main__':
 
 
     # left BC
-    bc_left = torch.ones(50)*xl
-    bc_right = torch.ones(50)*xr
+    bc_left = torch.ones(100)*xl
+    bc_right = torch.ones(100)*xr
     ic_t0 = torch.cat([torch.sin(x_evals).reshape(-1,1),torch.sin(2*x_evals).reshape(-1,1),torch.sin(3*x_evals).reshape(-1,1),torch.sin(4*x_evals).reshape(-1,1),torch.sin(5*x_evals).reshape(-1,1)],1)
     lambda_0s = torch.tensor([1.,2.,3.,4.,5.]).reshape(1,-1)
 
@@ -242,8 +246,8 @@ if __name__ == '__main__':
         for itr in range(1, args.niters + 1):
             func.train()
             indices = torch.tensor(np.random.choice(len(grid_x),1000))
-            x_tr = (grid_x[indices]).reshape(-1,1)
-            t_tr = (grid_t[indices]).reshape(-1,1)
+            x_tr = (grid_x[indices]).reshape(-1,1) + 0.005*torch.rand(len(indices),1)
+            t_tr = (grid_t[indices]).reshape(-1,1) + 0.005*torch.rand(len(indices),1)
 
             # add t0 to training times, including randomly generated ts
             optimizer.zero_grad()
@@ -277,8 +281,8 @@ if __name__ == '__main__':
                 # s, _,_ = compute_s_sdot(func, t)
                 # pred_y = s.detach()
                 # pred_y = pred_y.reshape(-1, args.num_ics, 1)
-                with torch.no_grad():
-                    visualize(u.detach(),y_evals,x_evals,grid_t,grid_x, loss_collector)
+                # with torch.no_grad():
+                #     visualize(u.detach(),y_evals,x_evals,grid_t,grid_x, loss_collector)
 
 
                 dudt = diff(u, ttest)

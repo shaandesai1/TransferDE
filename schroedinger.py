@@ -7,15 +7,16 @@ import argparse
 import torch.optim as optim
 import numpy as np
 # import time
+import seaborn as sns
 from matplotlib import pyplot as plt
 
 parser = argparse.ArgumentParser('transfer demo')
 
 parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
-parser.add_argument('--niters', type=int, default=10000)
+parser.add_argument('--niters', type=int, default=40000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=60)
+parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_ics', type=int, default=3)
 parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
@@ -26,6 +27,15 @@ parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
+
+# torch.set_default_tensor_type('torch.cuda.FloatTensor')
+# torch.backends.cudnn.benchmark = True
+
+
+# device =
+
+
+
 
 
 
@@ -148,7 +158,7 @@ class Transformer_Analytic(nn.Module):
         # t,x = grid_t[:, -1].reshape(-1, 1), grid_x[:, -1].reshape(-1, 1)
 
         # t,x = torch.linspace(0,1,100,requires_grad=True).reshape(-1,1),torch.linspace(-10,10,100,requires_grad=True).reshape(-1,1)
-        zindices = np.random.choice(len(t),60)
+        zindices = np.random.choice(len(t),350,replace=False)
         # print(zindices)
         t = t[zindices,:].reshape(-1,1)
         x = x[zindices,:].reshape(-1,1)
@@ -296,12 +306,12 @@ class Transformer_Analytic(nn.Module):
         full_IC_matrix = []
         for sigma_ in sigma:
             for p0_ in p0:
-                print(sigma_)
+                # print(sigma_)
                 IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma_, x0=0., p0=p0_)
                 new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
 
-                print(IC[:,0])
-                print(new_IC)
+                # print(IC[:,0])
+                # print(new_IC)
                 full_IC_matrix.append(new_IC)
 
         full_IC_matrix = torch.hstack(full_IC_matrix)
@@ -316,13 +326,24 @@ class Transformer_Analytic(nn.Module):
 
         LVEC = DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd)
 
-        print(torch.linalg.cond(LVEC+0.01))
+        print(torch.linalg.cond(LVEC))
 
-        W0 = torch.linalg.solve(LVEC+ .01,HH0.t()@full_IC_matrix)
+        W0 = torch.linalg.solve(LVEC,HH0.t()@full_IC_matrix)
 
         # nwout = torch.cat([W0[:args.hidden_size + 1, :].reshape(-1, ), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
 
         return W0,dHdt,d2Hdx2
+
+
+        # sp1 = full_IC_matrix.shape[1]
+        # new_mat_A = torch.cat([DH,HH0,HHL-HHR,HHLd-HHRd],0)
+        # new_mat_Y = torch.cat([torch.zeros(len(DH),sp1),full_IC_matrix,torch.zeros(len(HHL),sp1),torch.zeros(len(HHL),sp1)],0)
+        # W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        # return W0.solution, dHdt, d2Hdx2
+
+
+
+
 
 
 if args.viz:
@@ -468,11 +489,14 @@ if __name__ == '__main__':
 
     func = ODEFunc(hidden_dim=NDIMZ,output_dim=2*args.num_ics)
 
-    optimizer = optim.Adam(func.parameters(), lr=1e-2)
+    optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
     loss_collector = []
     best_residual = 1e-1
     if not args.evaluate_only:
+
+        init_force = torch.cat([get_ic(ic_t0, x_evals, sigma=0.5, p0=1.), get_ic(ic_t0, x_evals, sigma=0.6, p0=2.),
+                                get_ic(ic_t0, x_evals, sigma=0.7, p0=3.), ], 1)
 
         for itr in range(1, args.niters + 1):
             func.train()
@@ -488,7 +512,6 @@ if __name__ == '__main__':
             d2udx2 = diff(u, x_tr, 2)
             loss_diffeq = torch.mean((dudt - d2udx2@DIFF_MATRIX.t())**2)
 
-            init_force = torch.cat([get_ic(ic_t0,x_evals,sigma=0.5,p0=1.),get_ic(ic_t0,x_evals,sigma=0.6,p0=2.),get_ic(ic_t0,x_evals,sigma=0.7,p0=3.),],1)
             u_t0 = torch.mean((func(ic_t0, x_evals.reshape(-1, 1)) - init_force) ** 2)
             xleft  =bc_left.reshape(-1, 1)
             yleft = func(y_evals.reshape(-1, 1),xleft )
@@ -524,11 +547,13 @@ if __name__ == '__main__':
                     torch.save(func.state_dict(), 'func_ffnn_schroed')
                     best_residual = loss_diffeq.item()
 
-    func.load_state_dict(torch.load('func_ffnn_schroed'))
+    func.load_state_dict(torch.load('func_ffnn_schroed',map_location=torch.device('cpu')))
     func.eval()
 
-    x_evals = torch.linspace(xl, xr, 100)
-    y_evals = torch.linspace(t0, tmax, 100)
+    tmax = 0.5
+
+    x_evals = torch.linspace(xl, xr, 200)
+    y_evals = torch.linspace(t0, tmax, 200)
     x_evals.requires_grad = True
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
@@ -550,17 +575,27 @@ if __name__ == '__main__':
 
     WOUT,Ht,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,sigmas,p0s)
 
+
+    ### first figure
+
     # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
     H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(grid_xx),1)],1)
 
     # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
     HH = torch.block_diag(H,H)
 
-    teval_point = 1.
+    teval_point = .5
 
     error_vec = []
 
-    fig,ax = plt.subplots(3,3)
+    fig,ax = plt.subplots(3,3,sharex=True,sharey=True)
+
+    sns.axes_style(style='ticks')
+    sns.set_context("paper", font_scale=2,
+                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                        'lines.linewidth': 2})
+    sns.set_palette('deep')
+
     axs = ax.ravel()
     with torch.no_grad():
         out_pred = HH@WOUT
@@ -575,29 +610,26 @@ if __name__ == '__main__':
                 pred_psi = (out_pred[:,idx]).reshape(-1,1)
                 pred_psi_real = (pred_psi[:len(grid_xx), 0]).reshape(len(x_evals), len(y_evals)).t()
                 pred_psi_img = (pred_psi[len(grid_xx):, 0]).reshape(len(x_evals), len(y_evals)).t()
-                dx = (xr - xl) / 100
-                norm_const = 1.#np.sqrt(((pred_psi_real[-1, :] ** 2 + pred_psi_img[-1, :] ** 2) * dx).sum())
 
-                print(norm_const**2)
 
                 # error = ((gt_real.ravel()-pred_psi_real[0,:].ravel()/norm_const)**2 + (gt_img.ravel()-pred_psi_img[0,:].ravel()/norm_const)**2).mean()
                 # error_vec.append(error)
 
-                eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
+                # eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
 
-                if idx == 0:
-                    axs[idx].plot(eval_func[:,0],eval_func[:,1],label='pred_train',linestyle='--')
-                    print('func')
-                    print(((eval_func[:,0]**2 + eval_func[:,1]**2)*dx).sum())
-                if idx == 4:
-                    axs[idx].plot(eval_func[:,2],eval_func[:,3],label='pred_train',linestyle='--')
-                if idx == 8:
-                    axs[idx].plot(eval_func[:,4],eval_func[:,5],label='pred_train',linestyle='--')
-
-
-                # print(norm_const)
-                axs[idx].plot(gt_real,gt_img,label='gt')
-                axs[idx].plot(pred_psi_real[-1,:]/norm_const,pred_psi_img[-1,:]/norm_const,label='pred')
+                if ([sigma_,p0_] == [0.5,1.]) or([sigma_,p0_] == [0.6,2.]) or ([sigma_,p0_] == [0.7,3.]):
+                    axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+                    axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+                # elif idx == 4:
+                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+                # elif idx == 8:
+                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+                else:
+                    # print(norm_const)
+                    axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+                    axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='royalblue')
 
 
                 # axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred')
@@ -607,98 +639,110 @@ if __name__ == '__main__':
                 # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred3')
 
                 # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred1')
+                # axs[idx].set_xlabel(r'$\psi_R$')
+                # axs[idx].set_ylabel(r'$\psi_I$')
                 idx += 1
-                plt.legend()
-        plt.show()
-        print(error_vec)
+                # plt.legend()
 
-        # print((out_pred))
-        # loss_test = torch.mean((Ht@WOUT - (Hxx@WOUT) @ get_block_matrix(torch.tensor(1.)).t()) ** 2)
 
-        # print(torch.mean(loss_test**2))
-        # fig, ax = plt.subplots(1, 3, figsize=(15, 5))
-        #
-        # pc=ax[0].contourf(x_evals, y_evals, (out_pred[:,0]**2 + out_pred[:,1]**2).reshape(len(x_evals), len(y_evals)).t())
-        # ax[0].set_title('predicted solution')
-        # fig.colorbar(pc, ax=ax[0])
-        #
-        # new_pred = out_pred[:,0].reshape(len(x_evals), len(y_evals)).t()
-        # new_pred1 = out_pred[:, 1].reshape(len(x_evals), len(y_evals)).t()
-        #
-        # ax[1].plot(new_pred[0,:],new_pred1[0,:])
-        #
-        # ax[2].plot(new_pred[-1, :], new_pred1[-1, :])
-        # plt.show()
-    # import numpy as np
-    # from matplotlib import pyplot as plt
-    # from matplotlib.animation import FuncAnimation
-    #
-    # plt.style.use('seaborn-pastel')
-    # dpi = 100
-    #
-    # # fig = plt.figure()
-    # # ax = plt.axes()
-    # # line, = plt.plot([], [])
-    # fig, ax = plt.subplots(figsize=(5,5))
-    #
-    # def animate(i):
-    #     print(i)
-    #     ax.clear()
-    #     # plt.cla()
-    #
-    #     with torch.no_grad():
-    #         unew = func(torch.ones(100) *i/0.1, torch.linspace(-10., 10., 100))
-    #         # a1 = plt.scatter(unew[:, 0], unew[:, 1])
-    #
-    #     ax.plot(unew[:,0])
-    #     ax.plot(unew[:,1])
-    #     # return figs
-    #
-    #
-    # anim = FuncAnimation(fig, animate,frames=10,interval=100)
-    #
-    # anim.save('sine_wave.gif', writer='imagemagick')
+        ax[0,0].set_ylabel(r'$\sigma=0.5$')
+        ax[1, 0].set_ylabel(r'$\sigma=0.6$')
+        ax[2, 0].set_ylabel(r'$\sigma=0.7$')
 
+        ax[2, 0].set_xlabel(r'$p_0=1$')
+        ax[2, 1].set_xlabel(r'$p_0=2$')
+        ax[2, 2].set_xlabel(r'$p_0=3$')
+
+        plt.tight_layout()
+        plt.savefig('schroedinger.pdf',dpi=2400,bbox_inches='tight')
+
+    # tmax = 1.
     #
-    # x_evals = torch.linspace(xl, xr, 50)
-    # y_evals = torch.linspace(t0, tmax, 50)
+    # x_evals = torch.linspace(xl, xr, 200)
+    # y_evals = torch.linspace(t0, tmax, 200)
     # x_evals.requires_grad = True
     # y_evals.requires_grad = True
     # grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
-    # # grid_x.requires_grad = True
-    # # grid_t.requires_grad = True
     #
-    # # print(grid_t[:,0], grid_x[:,0])
+    # WOUT, Ht, Hxx = wout_gen.get_wout(func, grid_t.reshape(-1, 1), grid_x.reshape(-1, 1), grid_t, grid_x, [0.65],[2.5])
     #
-    # grid_xx = grid_x.ravel()
-    # grid_tt = grid_t.ravel()
+    # # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
+    # H = torch.cat([func.hidden_states(grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)), torch.ones(len(grid_x.ravel()), 1)],1)
     #
-    # WOUT,Htt,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,)
-    #
-    # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Htt),1)],1)
-    #
-    # # Htt = diff(H,grid_tt.reshape(-1,1),2)
-    # # Hxx = diff(H,grid_xx.reshape(-1,1),2)
-    #
+    # # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
+    # HH = torch.block_diag(H, H)
     # with torch.no_grad():
-    #     out_pred = (H@WOUT)
-    #     # print((out_pred))
-    #     loss_test =Htt@WOUT -c(grid_xx.reshape(-1,1))*Hxx@WOUT
-    #     print(torch.mean(loss_test**2))
+    #     out_pred = HH @ WOUT
     #
-    #     fig,ax = plt.subplots(1,3,figsize=(15,5))
+    #     fig, ax = plt.subplots(1,2,figsize=(10,5))
     #
-    #     pc=ax[0].contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
-    #     ax[0].set_title('predicted solution')
-    #     fig.colorbar(pc, ax=ax[0])
+    #     # gt_psi = psi(teval_point, x_evals, 1., sigma_, p0_, x0=0)
+    #     # gt_real = np.real(gt_psi)
+    #     # gt_img = np.imag(gt_psi)
+    #     pred_psi = (out_pred[:, 0]).reshape(-1, 1)
+    #     pred_psi_real = (pred_psi[:len(grid_x.ravel()), 0]).reshape(len(x_evals), len(y_evals)).t()
+    #     pred_psi_img = (pred_psi[len(grid_x.ravel()):, 0]).reshape(len(x_evals), len(y_evals)).t()
     #
-    #     u_true = 3*torch.sin(grid_xx) * torch.exp(-grid_tt)
+    #     predwf = pred_psi_real ** 2 + pred_psi_img ** 2
+    #     gtwf = (np.abs(psi(grid_t,grid_x,1.,0.65,2.5)))**2
+    #     a1= ax[0].contourf(x_evals,y_evals,predwf)
+    #     plt.colorbar(a1,ax=ax[0])
     #
-    #     ax[1].contourf(x_evals, y_evals, u_true.reshape(len(x_evals), len(y_evals)).t())
-    #     ax[1].set_title('true solution')
-    #
-    #     pc = ax[2].contourf(x_evals, y_evals, (u_true.reshape(len(x_evals), len(y_evals)).t() - out_pred.reshape(len(x_evals), len(y_evals)).t()) ** 2)
-    #     ax[2].set_title('residuals')
-    #     fig.colorbar(pc, ax=ax[2])
-    #
-    #     plt.show()
+    #     a2=ax[1].contourf(x_evals,y_evals,(np.transpose(gtwf) - predwf)**2)
+    #     plt.colorbar(a2,ax=ax[1])
+    #     plt.tight_layout()
+    #     plt.savefig('residuals.pdf',dpi=2400,bbox_inches='tight')
+
+    tmax = 1.
+
+    sigmas = torch.linspace(0.3,1.5,50)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
+    p0s = torch.linspace(.5,6.,50)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+
+    x_evals = torch.linspace(xl, xr, 200)
+    y_evals = torch.linspace(t0, tmax, 200)
+    x_evals.requires_grad = True
+    y_evals.requires_grad = True
+    grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
+
+    WOUT, Ht, Hxx = wout_gen.get_wout(func, grid_t.reshape(-1, 1), grid_x.reshape(-1, 1), grid_t, grid_x, sigmas,p0s)
+
+    # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
+    H = torch.cat([func.hidden_states(grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)), torch.ones(len(grid_x.ravel()), 1)],1)
+
+    # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
+    HH = torch.block_diag(H, H)
+    from matplotlib import ticker, cm
+    idx = 0
+    with torch.no_grad():
+        out_pred = HH @ WOUT
+
+        # fig, ax = plt.subplots(1,2,figsize=(10,5))
+        error = np.zeros(int(len(sigmas)*len(p0s)))
+        errormeans = np.zeros(int(len(sigmas) * len(p0s)))
+
+        for sigma_ in sigmas:
+            for p0_ in p0s:
+                pred_psi = (out_pred[:, idx]).reshape(-1, 1)
+                pred_psi_real = (pred_psi[:len(grid_x.ravel()), 0]).reshape(len(x_evals), len(y_evals)).t()
+                pred_psi_img = (pred_psi[len(grid_x.ravel()):, 0]).reshape(len(x_evals), len(y_evals)).t()
+
+                predwf = pred_psi_real ** 2 + pred_psi_img ** 2
+                gtwf = (np.abs(psi(grid_t,grid_x,1.,sigma_,p0_)))**2
+                error[idx] =torch.max((np.transpose(gtwf) - predwf)**2)
+                errormeans[idx] = torch.mean((np.transpose(gtwf) - predwf)**2)
+                idx+=1
+                # plt.colorbar(a2,ax=ax[1])
+                # plt.tight_layout()
+                # plt.savefig('residuals.pdf',dpi=2400,bbox_inches='tight')
+        print(error)
+        fig,ax = plt.subplots()
+        # cs =ax[0].contourf(sigmas,p0s,np.transpose(error.reshape(len(sigmas),len(p0s))),locator=ticker.LogLocator())
+        # cbar = fig.colorbar(cs,ax=ax[0])
+
+        cs = ax.contourf(sigmas, p0s, np.transpose(errormeans.reshape(len(sigmas), len(p0s))),
+                            locator=ticker.LogLocator(),levels=6)
+        cbar = fig.colorbar(cs, ax=ax)
+        ax.set_xlabel(r'$\sigma$')
+        ax.set_ylabel(r'$p_0$')
+        ax.plot([.5,.6,.7], [1,2,3], 'b+',c='red')
+        plt.savefig('schrd_abl.pdf',dpi=2400,bbox_inches='tight')

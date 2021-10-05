@@ -22,7 +22,7 @@ parser.add_argument('--bs', type=int, default=100)
 
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_true')
+parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
 
@@ -128,6 +128,12 @@ class Transformer_Analytic(nn.Module):
 
         # print('enter wout')
         # s1=time.time()
+
+        zindices = np.random.choice(len(t), 500, replace=False)
+        # print(zindices)
+        t = t[zindices, :].reshape(-1, 1)
+        x = x[zindices, :].reshape(-1, 1)
+
         H = func.hidden_states(t,x)
         # s2 = time.time()
         # print(s2-s1)

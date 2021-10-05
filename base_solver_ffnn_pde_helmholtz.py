@@ -16,7 +16,7 @@ parser.add_argument('--tmax', type=float, default=3.)
 parser.add_argument('--dt', type=int, default=0.1)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
-parser.add_argument('--hidden_size', type=int, default=100)
+parser.add_argument('--hidden_size', type=int, default=50)
 parser.add_argument('--num_ics', type=int, default=1)
 parser.add_argument('--num_test_ics', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
@@ -99,7 +99,7 @@ def diff(u, t, order=1):
         return torch.zeros_like(t, requires_grad=True)
     else:
         der.requires_grad_()
-    for i in range(1, order):
+    for _ in range(1, order):
 
         der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
         # print()
@@ -196,6 +196,7 @@ def visualize(u,t,x,grid_t,grid_x,lst):
     if args.viz:
         ax_traj.cla()
         ax_phase.cla()
+        print('early viz')
         ax_traj.contourf(x,t,u[:,0].reshape(len(x),len(t)).t())
         # u_true = torch.sin(grid_x)*torch.exp(-grid_t)
         ax_phase.contourf(x,t,u[:,2].reshape(len(x),len(t)).t())
@@ -229,9 +230,9 @@ def get_rho(t,x,x01,y01,x02,y02):
     Y = t
     # A = 1;
     theta = torch.tensor(0.)
-    sigma_X = .1
-    sigma_Y = 0.1
-    A = 10.
+    sigma_X = .05
+    sigma_Y = 0.05
+    A = 20.
 
     # X, Y = np.meshgrid(np.arange(-5,5,.1), np.arange(-5,5,.1))
     a = torch.cos(theta) ** 2 / (2 * sigma_X ** 2) + torch.sin(theta) ** 2 / (2 * sigma_Y ** 2);
@@ -262,12 +263,12 @@ if __name__ == '__main__':
 
     ii = 0
     NDIMZ = args.hidden_size
-    xl = -15.#-2*np.pi
-    xr = 15.#2*np.pi#torch.tensor(np.pi)
-    t0 = -10.#-2*np.pi
-    tmax = 10.#2*np.pi#torch.tensor(np.pi)
-    x_evals = torch.linspace(xl,xr,100)
-    y_evals = torch.linspace(t0,tmax,100)
+    xl = -1.#-2*np.pi
+    xr = 1.#2*np.pi#torch.tensor(np.pi)
+    t0 = -1.#-2*np.pi
+    tmax = 1.#2*np.pi#torch.tensor(np.pi)
+    x_evals = torch.linspace(xl,xr,200)
+    y_evals = torch.linspace(t0,tmax,200)
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
     grid_x.requires_grad = True
     grid_t.requires_grad = True
@@ -279,10 +280,10 @@ if __name__ == '__main__':
 
 
     # left BC
-    bc_left = torch.ones(100)*xl
-    bc_right = torch.ones(100)*xr
-    ic_t0 = torch.ones(100)*t0
-    ic_tmax = torch.ones(100)*tmax
+    bc_left = torch.ones(200)*xl
+    bc_right = torch.ones(200)*xr
+    ic_t0 = torch.ones(200)*t0
+    ic_tmax = torch.ones(200)*tmax
 
     bc_left.requires_grad=True
     bc_right.requires_grad=True
@@ -293,7 +294,7 @@ if __name__ == '__main__':
 
     optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
-    center_xs = torch.tensor([[-1.,1.],[-2.,2.],[-3.,3.],[-4.,4.],[-5.,5.]])#(10.+10.)*torch.rand(5,2) + -10.
+    center_xs = torch.tensor([[-.1,.1],[-.2,.2],[-.3,.3],[-.4,.4],[-.5,.5]])#(10.+10.)*torch.rand(5,2) + -10.
     center_ys = torch.zeros_like(center_xs)#(7.+7.)*torch.rand(5,2) + -7.
 
     loss_collector = []
@@ -342,6 +343,7 @@ if __name__ == '__main__':
             loss_collector.append(loss_diffeq.item())
             if itr % args.test_freq == 0:
                 # with torch.no_grad():
+                print('enter')
                 func.eval()
                 # print(f'diffeq: {loss_collector[-1]}, bcs: {loss_ics.item()}')
                 tvals = grid_t.reshape(-1, 1)
@@ -350,9 +352,12 @@ if __name__ == '__main__':
                 d2udt2 = diff(u_eval, tvals, 2)
                 d2udx2 = diff(u_eval, xvals, 2)
 
-                u_eval.detach_()
-                d2udt2.detach_()
-                d2udx2.detach_()
+                print('evals set')
+                u_eval = u_eval.detach()
+                d2udt2 = d2udt2.detach()
+                d2udx2 = d2udx2.detach()
+
+                print('ves')
 
                 visualize(u_eval,y_evals,x_evals,grid_t,grid_x, loss_collector)
 
