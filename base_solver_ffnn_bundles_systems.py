@@ -202,7 +202,7 @@ def get_wout(s, sd,sdd, y0,y0dot,m1,m2,k1,k2, t):
 
     h0dot = torch.block_diag(sd[0, :].reshape(1, -1), sd[0, :].reshape(1, -1))
 
-    W0 = torch.linalg.solve(DH.t()@DH + h0.t()@h0 + h0dot.t()@h0dot, h0.t()@(y0[0,:].reshape(-1,1)) + h0dot.t()@(y0dot[0,:].reshape(-1,1)) )
+    W0 = torch.linalg.solve(DH.t()@DH + h0.t()@h0 + h0dot.t()@h0dot, h0.t()@y0.t() + h0dot.t()@y0dot.t() )
     return W0
 
     # print(f's {s.shape}')
@@ -453,17 +453,32 @@ if __name__ == '__main__':
 
     # print(Mblock)
 
-    sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=2,
-                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-                        'lines.linewidth': 2})
     sns.set_palette('deep')
 
+    sns.axes_style(style='ticks')
+    sns.set_context("paper", font_scale=2,
+                    rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                        'lines.linewidth': 2.5})
+    sns.set_palette('deep')
+
+    import matplotlib
+
+    matplotlib.rcParams['text.usetex'] = True
+    import matplotlib.pyplot as plt
 
     losses = []
     #
     pred_ys = []
     pred_yds = []
+
+#   dummy test
+    with torch.no_grad():
+        s1 = time.time()
+        wout = get_wout(h, hd, hdd, torch.rand(1000,2), torch.rand(1000,2), m1, m2, k1, k2, t.detach())
+        print('1oo')
+        print(time.time() - s1)
+
+
 
     # fig,ax = plt.subplots(3,1,figsize=(10,5))
     for i in range(50):
@@ -484,9 +499,9 @@ if __name__ == '__main__':
         # k2 = torch.rand(1)
 
         with torch.no_grad():
-
+            s1 = time.time()
             wout = get_wout(h, hd,hdd, true_y0,true_y0dot,m1,m2,k1,k2, t.detach())
-
+            print(time.time()-s1)
         # print(wout)
         # print(f'wout {wout.shape}')
         # woutn = wout.reshape(2,100)
@@ -504,9 +519,10 @@ if __name__ == '__main__':
         pred_ys.append(pred_y)
         pred_yds.append(pred_yd)
     # print(loss_diffeq)
-        losses.append((loss_diffeq**2).mean(1))
-
-    f, (a0) = plt.subplots(1,1, figsize=(5, 5))
+        losses.append((loss_diffeq**2).mean(1).detach().numpy())
+    print('final loss mean')
+    print(np.mean(losses),np.std(losses))
+    f, (a0) = plt.subplots(1,1, figsize=(6, 6))
 
     for i,(pred_y,pred_yd) in enumerate(zip(pred_ys,pred_yds)):
         if i ==0:
@@ -569,16 +585,16 @@ if __name__ == '__main__':
         # a1.set_xticks([])
         # a1.set_xticks([])
 
-    losses = torch.stack(losses, 1)
+    losses = np.stack(losses, 1)
     a2.set_yscale('log')
     a2.plot(np.arange(len(losses)) * args.dt, losses.mean(1), c='royalblue')
-    a2.set_ylabel('residuals')
-    a2.set_xlabel(r'$t$')
+    a2.set_ylabel(r'Residuals')
+    a2.set_xlabel(r'Time (s)')
 
         # a1.get_shared_x_axes().join(a1,a2)
         # a2.sharex(a1)
-    plt.legend()
-    plt.tight_layout()
+    # plt.legend()
+    # plt.tight_layout()
 
     plt.tight_layout()
     plt.savefig('beats_ics_2.pdf', dpi=2400, bbox_inches='tight')

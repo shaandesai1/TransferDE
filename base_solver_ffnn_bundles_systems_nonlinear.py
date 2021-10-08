@@ -24,7 +24,7 @@ parser.add_argument('--niters', type=int, default=15000)
 parser.add_argument('--niters_test', type=int, default=5000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_bundles', type=int, default=5)
-parser.add_argument('--num_bundles_test', type=int, default=20)
+parser.add_argument('--num_bundles_test', type=int, default=17)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
@@ -387,7 +387,7 @@ if __name__ == '__main__':
 
 # best_residual = 1e-1
 
-
+    s1 = time.time()
     for itr in range(1, args.niters_test + 1):
         new_net.train()
 
@@ -422,15 +422,32 @@ if __name__ == '__main__':
 
         loss.backward()
         optimizer.step()
-        loss_collector.append(torch.square(loss_diffeq).mean().item())
+        loss_collector.append(torch.square(loss_diffeq).mean().detach().numpy())
 
-    sns.set_palette('deep')
+    print(f'time:{time.time()-s1}')
+    print('error')
+    print(np.mean((loss_diffeq**2).detach().numpy()),np.std((loss_diffeq**2).detach().numpy()))
+
+    # sns.set_palette('deep')
+
+
+    # sns.set_palette('deep')
+    import matplotlib
+    matplotlib.rcParams['text.usetex'] = True
+    import matplotlib.pyplot as plt
 
     sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=2,
-                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-                        'lines.linewidth': 2})
+    sns.set_context("paper", font_scale=2.3,
+                    rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                        'lines.linewidth': 2.5})
     sns.set_palette('deep')
+    sns.set_color_codes(palette='deep')
+    #
+    # sns.axes_style(style='ticks')
+    # sns.set_context("paper", font_scale=2,
+    #                 rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+    #                     'lines.linewidth': 2})
+    # sns.set_palette('deep')
 
 
     with torch.no_grad():
@@ -440,20 +457,20 @@ if __name__ == '__main__':
         pred_yd = new_net(hd).detach().numpy()
 
         # plt.figure()
-        f, (a0,a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [4, 1]},figsize=(8,12))
+        f, (a0,a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [4, 1]},figsize=(6,8))
         for i in range(args.num_bundles_test):
             if i < 5:
-                a0.plot(pred_y[:, i], pred_yd[:, i], label='pred', c='green',alpha=1,linewidth=2)
+                a0.plot(pred_y[:, i], pred_yd[:, i], label='pred', c='#F39C12',alpha=1,linewidth=3)
             else:
-                a0.plot(pred_y[:,i],pred_yd[:,i],label='pred',c='royalblue')
-                a0.plot(true_y[:,i,0],true_y[:,i,1],label='gt',linestyle='--',c='black',alpha=0.5)
+                a0.plot(pred_y[:,i],pred_yd[:,i],label='pred',c='b',linewidth=3)
+                a0.plot(true_y[:,i,0],true_y[:,i,1],label='gt',linestyle='--',c='black',linewidth=2)
         a0.set_xlabel(r'$q$')
         a0.set_ylabel(r'$\dot{q}$')
 
         a1.set_yscale('log')
         a1.plot(np.arange(len(loss_diffeq))*args.dt,(loss_diffeq**2).mean(1),c='royalblue')
-        a1.set_xlabel('time')
-        a1.set_ylabel('residual')
+        a1.set_xlabel('Time (s)')
+        a1.set_ylabel('Residuals')
         plt.tight_layout()
         # plt.show()
         plt.savefig('nl_osc.pdf',dpi=2400,bbox_inches='tight')

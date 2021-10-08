@@ -301,10 +301,14 @@ if __name__ == '__main__':
 
     # with torch.no_grad():
 
-    def get_wout( func,x,t,rbc):
+    def get_wout( func,x,t,grid_x,grid_t,rbc):
 
         # print('enter wout')
         # s1=time.time()
+        zindices = np.random.choice(len(t), 100, replace=False)
+        # print(zindices)
+        t = t[zindices, :].reshape(-1, 1)
+        x = x[zindices, :].reshape(-1, 1)
 
         right_BC = rbc
 
@@ -324,14 +328,14 @@ if __name__ == '__main__':
 
         # H0 = func.hidden_states(grid_t[:,0].reshape(-1,1),grid_x[:,0].reshape(-1,1))
         # H0 = torch.cat([H0,torch.ones(len(H0),1)],1)
-        HL = func.hidden_states(t[0,0],x[0,0])
+        HL = func.hidden_states(grid_t[0,:],grid_x[0,:])
         HL = torch.cat([HL, torch.ones(len(HL),1)],1)
-        HR = func.hidden_states(t[0,0], right_BC)
+        HR = func.hidden_states(grid_t[-1,:], right_BC*torch.ones_like(grid_t[-1,:]))
         HR = torch.cat([HR, torch.ones(len(HR),1)],1)
 
         # print(HL,HR)
 
-        BL = torch.ones(1).reshape(1,1)#self.lbc(grid_t[0,:]).reshape(-1,1)
+        BL = torch.ones(len(HL)).reshape(-1,1)#self.lbc(grid_t[0,:]).reshape(-1,1)
         # BR = grid_t[0,:].reshape(-1,1)
 
         W0 = torch.linalg.solve(DH.t() @ DH + HL.t()@HL+HR.t()@HR, HL.t()@BL)
@@ -345,15 +349,15 @@ if __name__ == '__main__':
         t_inspect = torch.tensor(t_sub)
         rbc = 2*lambda_val*torch.sqrt(t_inspect)
         x_evals = torch.linspace(xl, xr, 50)
-        y_evals = t_inspect*torch.ones(50)#torch.linspace(t0, tmax, 50)
+        y_evals = torch.linspace(t0, tmax, 50)
         x_evals.requires_grad = True
         y_evals.requires_grad = True
-        grid_x, grid_t = x_evals,y_evals#torch.meshgrid(x_evals, y_evals)
+        grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
 
 
-        WOUT = get_wout(func,grid_x.reshape(-1,1),grid_t.reshape(-1,1),rbc)
+        WOUT = get_wout(func,grid_x.reshape(-1,1),grid_t.reshape(-1,1),grid_x,grid_t,rbc)
 
-        H = func.hidden_states(grid_t.reshape(-1,1),grid_x.reshape(-1,1))
+        H = func.hidden_states(t_inspect*torch.ones_like(x_evals),x_evals)
         H = torch.cat([H,torch.ones(len(H),1)],1)
         with torch.no_grad():
             out_pred = (H@WOUT)

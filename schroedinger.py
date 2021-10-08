@@ -6,7 +6,7 @@ import torch.nn as nn
 import argparse
 import torch.optim as optim
 import numpy as np
-# import time
+import time
 import seaborn as sns
 from matplotlib import pyplot as plt
 
@@ -561,8 +561,8 @@ if __name__ == '__main__':
     # grid_t.requires_grad = True
 
 
-    sigmas = torch.tensor([0.5,0.6,0.7])#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
-    p0s = torch.tensor([1.,2.,3.])#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+    sigmas =torch.tensor([0.5,0.6,0.7])#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
+    p0s =torch.tensor([1.,2.,3.])#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
 
 
 
@@ -572,9 +572,9 @@ if __name__ == '__main__':
     grid_tt = grid_t.ravel()
 
     # func, t, x, grid_t, grid_x, sigma, p0
-
+    s1 = time.time()
     WOUT,Ht,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,sigmas,p0s)
-
+    print(f'time:{time.time()-s1}')
 
     ### first figure
 
@@ -584,77 +584,77 @@ if __name__ == '__main__':
     # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
     HH = torch.block_diag(H,H)
 
-    teval_point = .5
-
-    error_vec = []
-
-    fig,ax = plt.subplots(3,3,sharex=True,sharey=True)
-
-    sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=2,
-                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-                        'lines.linewidth': 2})
-    sns.set_palette('deep')
-
-    axs = ax.ravel()
-    with torch.no_grad():
-        out_pred = HH@WOUT
-        # print(out_pred.shape)
-        idx = 0
-        for sigma_ in sigmas:
-            for p0_ in p0s:
-                # print(sigma_)
-                gt_psi = psi(teval_point,x_evals, 1., sigma_, p0_, x0=0)
-                gt_real = np.real(gt_psi)
-                gt_img = np.imag(gt_psi)
-                pred_psi = (out_pred[:,idx]).reshape(-1,1)
-                pred_psi_real = (pred_psi[:len(grid_xx), 0]).reshape(len(x_evals), len(y_evals)).t()
-                pred_psi_img = (pred_psi[len(grid_xx):, 0]).reshape(len(x_evals), len(y_evals)).t()
-
-
-                # error = ((gt_real.ravel()-pred_psi_real[0,:].ravel()/norm_const)**2 + (gt_img.ravel()-pred_psi_img[0,:].ravel()/norm_const)**2).mean()
-                # error_vec.append(error)
-
-                # eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
-
-                if ([sigma_,p0_] == [0.5,1.]) or([sigma_,p0_] == [0.6,2.]) or ([sigma_,p0_] == [0.7,3.]):
-                    axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                    axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
-                # elif idx == 4:
-                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
-                # elif idx == 8:
-                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
-                else:
-                    # print(norm_const)
-                    axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                    axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='royalblue')
-
-
-                # axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred')
-
-                # axs[idx].plot(pred_psi_real[-1, :], pred_psi_img[-1, :], label='pred1')
-                # axs[idx].plot(pred_psi_real[:, 0], pred_psi_img[:, 0], label='pred2')
-                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred3')
-
-                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred1')
-                # axs[idx].set_xlabel(r'$\psi_R$')
-                # axs[idx].set_ylabel(r'$\psi_I$')
-                idx += 1
-                # plt.legend()
-
-
-        ax[0,0].set_ylabel(r'$\sigma=0.5$')
-        ax[1, 0].set_ylabel(r'$\sigma=0.6$')
-        ax[2, 0].set_ylabel(r'$\sigma=0.7$')
-
-        ax[2, 0].set_xlabel(r'$p_0=1$')
-        ax[2, 1].set_xlabel(r'$p_0=2$')
-        ax[2, 2].set_xlabel(r'$p_0=3$')
-
-        plt.tight_layout()
-        plt.savefig('schroedinger.pdf',dpi=2400,bbox_inches='tight')
+    # teval_point = .5
+    #
+    # error_vec = []
+    #
+    # fig,ax = plt.subplots(3,3,sharex=True,sharey=True)
+    #
+    # sns.axes_style(style='ticks')
+    # sns.set_context("paper", font_scale=2,
+    #                 rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+    #                     'lines.linewidth': 2})
+    # sns.set_palette('deep')
+    #
+    # axs = ax.ravel()
+    # with torch.no_grad():
+    #     out_pred = HH@WOUT
+    #     # print(out_pred.shape)
+    #     idx = 0
+    #     for sigma_ in sigmas:
+    #         for p0_ in p0s:
+    #             # print(sigma_)
+    #             gt_psi = psi(teval_point,x_evals, 1., sigma_, p0_, x0=0)
+    #             gt_real = np.real(gt_psi)
+    #             gt_img = np.imag(gt_psi)
+    #             pred_psi = (out_pred[:,idx]).reshape(-1,1)
+    #             pred_psi_real = (pred_psi[:len(grid_xx), 0]).reshape(len(x_evals), len(y_evals)).t()
+    #             pred_psi_img = (pred_psi[len(grid_xx):, 0]).reshape(len(x_evals), len(y_evals)).t()
+    #
+    #
+    #             # error = ((gt_real.ravel()-pred_psi_real[0,:].ravel()/norm_const)**2 + (gt_img.ravel()-pred_psi_img[0,:].ravel()/norm_const)**2).mean()
+    #             # error_vec.append(error)
+    #
+    #             # eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
+    #
+    #             if ([sigma_,p0_] == [0.5,1.]) or([sigma_,p0_] == [0.6,2.]) or ([sigma_,p0_] == [0.7,3.]):
+    #                 axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+    #                 axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+    #             # elif idx == 4:
+    #             #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+    #             #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+    #             # elif idx == 8:
+    #             #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+    #             #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
+    #             else:
+    #                 # print(norm_const)
+    #                 axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
+    #                 axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='royalblue')
+    #
+    #
+    #             # axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred')
+    #
+    #             # axs[idx].plot(pred_psi_real[-1, :], pred_psi_img[-1, :], label='pred1')
+    #             # axs[idx].plot(pred_psi_real[:, 0], pred_psi_img[:, 0], label='pred2')
+    #             # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred3')
+    #
+    #             # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred1')
+    #             # axs[idx].set_xlabel(r'$\psi_R$')
+    #             # axs[idx].set_ylabel(r'$\psi_I$')
+    #             idx += 1
+    #             # plt.legend()
+    #
+    #
+    #     ax[0,0].set_ylabel(r'$\sigma=0.5$')
+    #     ax[1, 0].set_ylabel(r'$\sigma=0.6$')
+    #     ax[2, 0].set_ylabel(r'$\sigma=0.7$')
+    #
+    #     ax[2, 0].set_xlabel(r'$p_0=1$')
+    #     ax[2, 1].set_xlabel(r'$p_0=2$')
+    #     ax[2, 2].set_xlabel(r'$p_0=3$')
+    #
+    #     plt.tight_layout()
+    #     plt.savefig('schroedinger.pdf',dpi=2400,bbox_inches='tight')
 
     # tmax = 1.
     #
@@ -693,10 +693,12 @@ if __name__ == '__main__':
     #     plt.tight_layout()
     #     plt.savefig('residuals.pdf',dpi=2400,bbox_inches='tight')
 
-    tmax = 1.
-
-    sigmas = torch.linspace(0.3,1.5,50)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
-    p0s = torch.linspace(.5,6.,50)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+    # tmax = 1.
+    #
+    # sigmas = torch.linspace(0.3,1.5,50)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
+    # p0s = torch.linspace(.5,6.,50)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+    sigmas = torch.linspace(0.5,.7,20)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
+    p0s = torch.linspace(1,3,20)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
 
     x_evals = torch.linspace(xl, xr, 200)
     y_evals = torch.linspace(t0, tmax, 200)
@@ -704,7 +706,9 @@ if __name__ == '__main__':
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
 
+    s1 = time.time()
     WOUT, Ht, Hxx = wout_gen.get_wout(func, grid_t.reshape(-1, 1), grid_x.reshape(-1, 1), grid_t, grid_x, sigmas,p0s)
+    print(f'time:{time.time()-s1}')
 
     # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
     H = torch.cat([func.hidden_states(grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)), torch.ones(len(grid_x.ravel()), 1)],1)
@@ -734,15 +738,16 @@ if __name__ == '__main__':
                 # plt.colorbar(a2,ax=ax[1])
                 # plt.tight_layout()
                 # plt.savefig('residuals.pdf',dpi=2400,bbox_inches='tight')
-        print(error)
-        fig,ax = plt.subplots()
-        # cs =ax[0].contourf(sigmas,p0s,np.transpose(error.reshape(len(sigmas),len(p0s))),locator=ticker.LogLocator())
-        # cbar = fig.colorbar(cs,ax=ax[0])
-
-        cs = ax.contourf(sigmas, p0s, np.transpose(errormeans.reshape(len(sigmas), len(p0s))),
-                            locator=ticker.LogLocator(),levels=6)
-        cbar = fig.colorbar(cs, ax=ax)
-        ax.set_xlabel(r'$\sigma$')
-        ax.set_ylabel(r'$p_0$')
-        ax.plot([.5,.6,.7], [1,2,3], 'b+',c='red')
-        plt.savefig('schrd_abl.pdf',dpi=2400,bbox_inches='tight')
+    print('error')
+    print(np.mean(errormeans),np.std(errormeans))
+        # fig,ax = plt.subplots()
+        # # cs =ax[0].contourf(sigmas,p0s,np.transpose(error.reshape(len(sigmas),len(p0s))),locator=ticker.LogLocator())
+        # # cbar = fig.colorbar(cs,ax=ax[0])
+        #
+        # cs = ax.contourf(sigmas, p0s, np.transpose(errormeans.reshape(len(sigmas), len(p0s))),
+        #                     locator=ticker.LogLocator(),levels=6)
+        # cbar = fig.colorbar(cs, ax=ax)
+        # ax.set_xlabel(r'$\sigma$')
+        # ax.set_ylabel(r'$p_0$')
+        # ax.plot([.5,.6,.7], [1,2,3], 'b+',c='red')
+        # plt.savefig('schrd_abl.pdf',dpi=2400,bbox_inches='tight')

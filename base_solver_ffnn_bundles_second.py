@@ -22,12 +22,12 @@ parser.add_argument('--dt', type=int, default=0.05)
 parser.add_argument('--niters', type=int, default=10000)
 parser.add_argument('--niters_test', type=int, default=15000)
 parser.add_argument('--hidden_size', type=int, default=100)
-parser.add_argument('--num_bundles', type=int, default=100)
-parser.add_argument('--num_bundles_test', type=int, default=1000)
+parser.add_argument('--num_bundles', type=int, default=10)
+parser.add_argument('--num_bundles_test', type=int, default=10)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_true')
+parser.add_argument('--evaluate_only', action='store_false')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
@@ -94,7 +94,7 @@ class base_diffeq:
 
     def get_solution(self, true_y0, t):
         with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='dopri5')
+            true_y = odeint(self.base, true_y0, t, method='dopri8')
         return true_y
 
     def get_deriv(self, true_y0, t):
@@ -130,7 +130,7 @@ class ODEFunc(nn.Module):
     def __init__(self, hidden_dim, output_dim):
         super(ODEFunc, self).__init__()
         self.hdim = hidden_dim
-        self.nl = nn.Tanh()
+        self.nl = SiLU()
         self.lin1 = nn.Linear(1, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
         self.lout = nn.Linear(self.hdim, output_dim, bias=True)
@@ -271,10 +271,10 @@ if __name__ == '__main__':
     # t0 = torch.tensor([[0.]])
     # t0.requires_grad = True
 
-    tmax = torch.tensor([[np.pi]])
-    tmax.requires_grad = True
-
-    t = torch.cat([t,tmax], 0)
+    # tmax = torch.tensor([[np.pi]])
+    # tmax.requires_grad = True
+    #
+    # t = torch.cat([t,tmax], 0)
 
     # sample each parameter to build the tuples
     f_samples = random.choices(f_train, k=args.num_bundles)
@@ -302,6 +302,7 @@ if __name__ == '__main__':
     if not args.evaluate_only:
 
         for itr in range(1, args.niters + 1):
+            s1 = time.time()
             func.train()
 
             # add t0 to training times, including randomly generated ts
@@ -311,7 +312,7 @@ if __name__ == '__main__':
             # tmax = torch.tensor([[4*np.pi]])
             # tmax.requires_grad = True
 
-            tr = args.tmax * torch.rand(int(args.tmax / args.dt))[:20].reshape(-1, 1)
+            tr = args.tmax * torch.rand(int(args.tmax / args.dt)).reshape(-1, 1)
             tr.requires_grad = True
             tv = torch.cat([t0, tr], 0)
             # tv.requires_grad = True
@@ -337,6 +338,7 @@ if __name__ == '__main__':
             loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(loss_ics)
             loss.backward()
             optimizer.step()
+            # print(time.time()-s1)
             loss_collector.append(torch.square(loss_diffeq).mean().item())
             # print(loss_collector[-1])
             if itr % args.test_freq == 0:
@@ -379,7 +381,7 @@ if __name__ == '__main__':
     func.load_state_dict(torch.load('func_ffnn_bundles_vdp'))
     func.eval()
 
-    f_train = [lambda z: 0. * z, lambda z: 1 + 0 * z, lambda z: torch.cos(z), lambda z: torch.sin(z)]
+    f_train = [lambda z: 0. * z, lambda z: 1. + 0 * z, lambda z: torch.cos(z), lambda z: torch.sin(z)]
     a0_train = [lambda z: 1. + 0. * z, lambda z: 3 * z, lambda z: z ** 2]
     a1_train = [lambda z: 0 * z, lambda z: z ** 2, lambda z: z ** 3]
     r1 = -5.
@@ -387,10 +389,10 @@ if __name__ == '__main__':
     true_y0 = (r2 - r1) * torch.rand(100, 2) + r1
     t = torch.arange(0., args.tmax, args.dt).reshape(-1, 1)
     t.requires_grad = True
-    tmax = torch.tensor([[np.pi]])
-    tmax.requires_grad = True
-
-    t = torch.cat([t, tmax], 0)
+    # tmax = torch.tensor([[np.pi]])
+    # tmax.requires_grad = True
+    #
+    # t = torch.cat([t, tmax], 0)
 
     # sample each parameter to build the tuples
     f_samples = random.choices(f_train, k=args.num_bundles)
@@ -401,6 +403,7 @@ if __name__ == '__main__':
     diffeq_init = diffeq(a1_samples, a0_samples, f_samples)
     gt_generator = base_diffeq(diffeq_init)
     true_y = gt_generator.get_solution(y0_samples, t.ravel())
+    true_y = true_y[:,:,0]
 
     h = func.h(t)
     hd = diff(h, t)
@@ -409,10 +412,18 @@ if __name__ == '__main__':
     hd = hd.detach()
     hdd = hdd.detach()
 
+    h = torch.cat([h,torch.ones(len(h),1)],1)
+    hd = torch.cat([hd,torch.zeros(len(hd),1)],1)
+    hdd = torch.cat([hdd,torch.zeros(len(hdd),1)],1)
 
+    s1 = time.time()
     wout = get_wout(h, hd, hdd, true_y0, t.detach(), a1_samples, a0_samples, f_samples)
+    print(f'wout:{time.time()-s1}')
+
     pred_y = h@wout
     pred_yd = hd@wout
     pred_ydd = hdd @ wout
     current_residual = torch.mean((pred_ydd - get_udot(t, pred_y, pred_yd, a1_samples, a0_samples, f_samples)) ** 2)
     print(current_residual)
+
+    print(f'prediction_accuracy:{((pred_y - true_y) ** 2).mean()} pm {((pred_y - true_y) ** 2).std()}')

@@ -25,7 +25,7 @@ parser.add_argument('--hidden_size', type=int, default=200)
 parser.add_argument('--num_bundles', type=int, default=100)
 parser.add_argument('--num_bundles_test', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=100)
-parser.add_argument('--viz', action='store_true')
+parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
 parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
@@ -173,7 +173,7 @@ class Transformer_Learned(nn.Module):
 
 
 def get_wout(s, sd, y0, t,a0s,fs):
-    y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
+    # y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
     a0 = a0s(t).reshape(-1, 1)
     a1 = torch.ones_like(a0)
@@ -291,6 +291,7 @@ if __name__ == '__main__':
     if not args.evaluate_only:
 
         for itr in range(1, args.niters + 1):
+            s1 = time.time()
             func.train()
 
             # add t0 to training times, including randomly generated ts
@@ -317,6 +318,8 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             loss_collector.append(torch.square(loss_diffeq).mean().item())
+
+            print(time.time()-s1)
             if itr % args.test_freq == 0:
                 func.eval()
                 pred_y = func(t)
@@ -331,11 +334,11 @@ if __name__ == '__main__':
 
                 current_residual = torch.mean((pred_ydot - get_udot(t,pred_y,a0_samples,f_samples))**2)
                 print(current_residual.item())
-                if current_residual < best_residual:
-
-                    torch.save(func.state_dict(), 'func_ffnn_bundles')
-                    best_residual = current_residual
-                    print(itr,best_residual.item())
+                # if current_residual < best_residual:
+                #
+                #     torch.save(func.state_dict(), 'func_ffnn_bundles')
+                #     best_residual = current_residual
+                #     print(itr,best_residual.item())
         # torch.save(func.state_dict(), 'func_ffnn_bundles')
 
     # with torch.no_grad():
@@ -415,7 +418,7 @@ if __name__ == '__main__':
     # s2 = time.time()
     # print(f'estim_ics:{s2 - s1}')
 
-    # print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
+    print(f'prediction_accuracy:{((pred_y - true_ys) ** 2).mean()} pm {((pred_y - true_ys) ** 2).std()}')
     # print(f'estim_accuracy:{((estim_ys - true_ys) ** 2).mean()} pm {((estim_ys - true_ys) ** 2).std()}')
 
     fig, ax = plt.subplots(2, 1, figsize=(10, 8), sharex=True)

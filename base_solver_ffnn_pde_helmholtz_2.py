@@ -138,13 +138,13 @@ class Transformer_Analytic(nn.Module):
     returns Wout analytic, need to define the parameter coefficients
     """
 
-    def __init__(self,bb,tb,lbc,rbc,rho):
+    def __init__(self,bb,tb,lbc,rbc):
         super(Transformer_Analytic, self).__init__()
         self.bb = bb
         self.tb = tb
         self.lbc = lbc
         self.rbc = rbc
-        self.rho = rho
+        # self.rho = rho
         # self.lambda_ = lambda_
 
 
@@ -177,7 +177,7 @@ class Transformer_Analytic(nn.Module):
         # H = torch.cat([H,torch.ones(len(H),1)],1)
         # s2 = time.time()
         # print(s2-s1)
-        rho = self.rho(t.reshape(-1,1),x.reshape(-1,1)).reshape(-1,1)
+        rho = torch.cat([get_rho(t.reshape(-1,1),x.reshape(-1,1),ks_val,0,ks_val,0).reshape(-1,1) for ks_val in ks],1)
 
         DH = (d2Hdt2+d2Hdx2)
 
@@ -207,10 +207,10 @@ class Transformer_Analytic(nn.Module):
         W0solve = torch.linalg.solve(LHS, RHS)
         # return W0,d2Hdt2,d2Hdx2
 
-        new_mat_A = torch.cat([DH,H0,HT,HL,HR],0)
-        new_mat_Y = torch.cat([rho,torch.ones(len(H0),1)*0,torch.ones(len(HT),1)*0,torch.ones(len(HL),1)*0,torch.ones(len(HR),1)*0],0)
-        W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
-        return W0.solution,W0solve
+        # new_mat_A = torch.cat([DH,H0,HT,HL,HR],0)
+        # new_mat_Y = torch.cat([rho,torch.ones(len(H0),1)*0,torch.ones(len(HT),1)*0,torch.ones(len(HL),1)*0,torch.ones(len(HR),1)*0],0)
+        # W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        return W0solve,W0solve
 
 
 
@@ -248,6 +248,12 @@ def visualize(u,t,x,grid_t,grid_x,lst):
         # ax_traj.legend()
         plt.draw()
         plt.pause(0.001)
+
+
+def u_analytic(x,y,k):
+    return -(torch.sin(np.pi*k*x)*torch.sin(np.pi*k*y))/(2*(k*np.pi)**2)
+
+
 
 def get_rho(t,x,x01,y01,x02,y02):
     X=x
@@ -405,7 +411,7 @@ if __name__ == '__main__':
 
     # with torch.no_grad():
     # rho = lambda v1,v2: get_rho(v1,v2,4.,0,4.,0)#get_rho(v1,v2,1,0,3,0)#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
-    rho = lambda v1,v2: (-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
+    # rho = lambda v1,v2: []#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
 
     ft = lambda t: 0*t#3*torch.sin(t)
     fb = lambda t: 0*t#torch.sin(t)
@@ -419,7 +425,7 @@ if __name__ == '__main__':
     sns.set_palette('deep')
 
 
-    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,rho)
+    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc)
 
     func.load_state_dict(torch.load('func_ffnn_helm_2',map_location=torch.device('cpu')))
     func.eval()
@@ -438,17 +444,20 @@ if __name__ == '__main__':
     kval = torch.tensor(0.)
     # print(grid_t[:,0], grid_x[:,0])
 
-    x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
-    y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
-    x_evals1.requires_grad = True
-    y_evals1.requires_grad = True
-    grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
+    # x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
+    # y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
+    # x_evals1.requires_grad = True
+    # y_evals1.requires_grad = True
+    # grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
+    #
+    # grid_xx = grid_x1.ravel()
+    # grid_tt = grid_t1.ravel()
 
-    grid_xx = grid_x1.ravel()
-    grid_tt = grid_t1.ravel()
+    kvals = torch.linspace(1.,4.,100)
 
-    WOUT,WOUT1 = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,kval)
-
+    t1 = time.time()
+    WOUT,WOUT1 = wout_gen.get_wout(func,grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_t,grid_x,kvals)
+    print(f'time:{time.time()-t1}')
     tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
 
     H = func.hidden_states(tv,xv)
@@ -460,41 +469,51 @@ if __name__ == '__main__':
     # Hxx = torch.cat([Hxx, torch.zeros(len(H), 1)], 1)
 
     with torch.no_grad():
-        out_pred = (H@WOUT)
+        # out_pred = (H@WOUT)
         out_pred1 = (H@WOUT1)
         # print((out_pred))
         # loss_test =Htt@WOUT + Hxx@WOUT -rho(tv,xv)
         # loss_test1 = Htt @ WOUT1 + Hxx @ WOUT1 - rho(tv, xv)
 
-        plt.figure()
-        contours = plt.contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), 6, colors='black')
-        plt.clabel(contours, inline=True, fontsize=8)
-        plt.contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), alpha=0.9)
-        # fig.colorbar(pc,ax=ax[0])
-        plt.xlabel('x')
-        plt.ylabel('t')
-        plt.colorbar()
+        u_true = torch.cat([u_analytic(xv, tv, kv).reshape(-1,1) for kv in kvals],1)
 
-        plt.savefig('helm_2_qr.pdf',dpi=2400,bbox_inches='tight')
+        # u_true = 1./4*(2*u_analytic(grid_x,grid_t,1)-4*u_analytic(grid_x,grid_t,2)+6*u_analytic(grid_x,grid_t,3)-8*u_analytic(grid_x,grid_t,4))
 
-        # fig, ax = plt.subplots(1,1, figsize=(10, 5))
-        plt.figure()
-        contours = plt.contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),levels= 8, colors='black')
-        plt.clabel(contours, inline=True, fontsize=6)
-        plt.contourf(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),alpha=0.9,levels=8)
-        # fig.colorbar(pc,ax=ax[0])
-        plt.xlabel('x')
-        plt.ylabel('t')
-        plt.colorbar()
+        # s1 = out_pred.reshape(len(x_evals), len(y_evals)).t()
+        # s2 = out_pred1.reshape(len(x_evals), len(y_evals)).t()
 
-        # pc = ax[1].contour(x_evals, y_evals, (loss_test ** 2).reshape(len(x_evals), len(y_evals)).t(), 30)
-        # ax[1].set_xlabel('x')
-        # ax[1].set_ylabel('t')
-        # fig.colorbar(pc, ax=ax[1])
+        # print(f'error:{((s1-u_true)**2).mean()}')
+        print(f'error1:{((out_pred1 - u_true) ** 2).mean(),((out_pred1 - u_true) ** 2).std()}')
 
-        plt.savefig('helm_2_solver.pdf', dpi=2400, bbox_inches='tight')
-
-        # pc = ax[1].contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),20)
+        # plt.figure()
+        # contours = plt.contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), 6, colors='black')
+        # plt.clabel(contours, inline=True, fontsize=8)
+        # plt.contourf(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), alpha=0.9)
+        # # fig.colorbar(pc,ax=ax[0])
+        # plt.xlabel('x')
+        # plt.ylabel('t')
+        # plt.colorbar()
+        #
+        # plt.savefig('helm_2_qr.pdf',dpi=2400,bbox_inches='tight')
+        #
+        # # fig, ax = plt.subplots(1,1, figsize=(10, 5))
+        # plt.figure()
+        # contours = plt.contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),levels= 8, colors='black')
+        # plt.clabel(contours, inline=True, fontsize=6)
+        # plt.contourf(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),alpha=0.9,levels=8)
+        # # fig.colorbar(pc,ax=ax[0])
+        # plt.xlabel('x')
+        # plt.ylabel('t')
+        # plt.colorbar()
+        #
+        # # pc = ax[1].contour(x_evals, y_evals, (loss_test ** 2).reshape(len(x_evals), len(y_evals)).t(), 30)
+        # # ax[1].set_xlabel('x')
+        # # ax[1].set_ylabel('t')
+        # # fig.colorbar(pc, ax=ax[1])
+        #
+        # plt.savefig('helm_2_solver.pdf', dpi=2400, bbox_inches='tight')
+        #
+        # # pc = ax[1].contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),20)
         # # pc = ax[0].contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
         #
         # ax[1].set_title('predicted solution')
