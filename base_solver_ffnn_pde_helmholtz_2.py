@@ -8,6 +8,7 @@ import torch.optim as optim
 import numpy as np
 import time
 import seaborn as sns
+from matplotlib import ticker, cm
 
 torch.manual_seed(33)
 
@@ -138,13 +139,13 @@ class Transformer_Analytic(nn.Module):
     returns Wout analytic, need to define the parameter coefficients
     """
 
-    def __init__(self,bb,tb,lbc,rbc):
+    def __init__(self,bb,tb,lbc,rbc,rho):
         super(Transformer_Analytic, self).__init__()
         self.bb = bb
         self.tb = tb
         self.lbc = lbc
         self.rbc = rbc
-        # self.rho = rho
+        self.rho = rho
         # self.lambda_ = lambda_
 
 
@@ -157,7 +158,7 @@ class Transformer_Analytic(nn.Module):
             return torch.cat([var,torch.zeros(len(var),1)],1)
     def get_wout(self, func,t,x,grid_t,grid_x,ks):
 
-        zindices = np.random.choice(len(t), 500,replace=False)
+        zindices = np.random.choice(len(t), 800,replace=False)
         # print(zindices)
         t = t[zindices, :].reshape(-1, 1)
         x = x[zindices, :].reshape(-1, 1)
@@ -177,7 +178,7 @@ class Transformer_Analytic(nn.Module):
         # H = torch.cat([H,torch.ones(len(H),1)],1)
         # s2 = time.time()
         # print(s2-s1)
-        rho = torch.cat([get_rho(t.reshape(-1,1),x.reshape(-1,1),ks_val,0,ks_val,0).reshape(-1,1) for ks_val in ks],1)
+        rho = self.rho(t.reshape(-1,1),x.reshape(-1,1))#torch.cat([get_rho(t.reshape(-1,1),x.reshape(-1,1),ks_val,0,ks_val,0).reshape(-1,1) for ks_val in ks],1)
 
         DH = (d2Hdt2+d2Hdx2)
 
@@ -200,17 +201,17 @@ class Transformer_Analytic(nn.Module):
         BL = self.lbc(grid_t[0,xindices]).reshape(-1,1)
         BR = self.rbc(grid_t[-1,xindices]).reshape(-1,1)
 
-        LHS = DH.t() @ DH +torch.eye(len(DH.t()))+ H0.t() @ H0 + HT.t() @ HT + HL.t() @ HL + HR.t() @ HR
+        LHS = DH.t() @ DH +2*torch.eye(len(DH.t()))+ H0.t() @ H0 + HT.t() @ HT + HL.t() @ HL + HR.t() @ HR
         RHS = DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR
         # print(torch.linalg.cond(LHS))
 
         W0solve = torch.linalg.solve(LHS, RHS)
         # return W0,d2Hdt2,d2Hdx2
 
-        # new_mat_A = torch.cat([DH,H0,HT,HL,HR],0)
-        # new_mat_Y = torch.cat([rho,torch.ones(len(H0),1)*0,torch.ones(len(HT),1)*0,torch.ones(len(HL),1)*0,torch.ones(len(HR),1)*0],0)
-        # W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
-        return W0solve,W0solve
+        new_mat_A = torch.cat([DH,H0,HT,HL,HR,2*torch.eye(len(DH.t()))],0)
+        new_mat_Y = torch.cat([rho,torch.ones(len(H0),1)*0,torch.ones(len(HT),1)*0,torch.ones(len(HL),1)*0,torch.ones(len(HR),1)*0,torch.ones(len(DH.t()),1)*0],0)
+        W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
+        return W0.solution,W0solve
 
 
 
@@ -410,7 +411,7 @@ if __name__ == '__main__':
         # torch.save(func.state_dict(), 'func_ffnn_helm_2')
 
     # with torch.no_grad():
-    # rho = lambda v1,v2: get_rho(v1,v2,4.,0,4.,0)#get_rho(v1,v2,1,0,3,0)#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
+    rho = lambda v1,v2: (-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
     # rho = lambda v1,v2: []#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
 
     ft = lambda t: 0*t#3*torch.sin(t)
@@ -418,20 +419,26 @@ if __name__ == '__main__':
     lbc = lambda t: 0*t#torch.sin(t)
     rbc = lambda t: 0*t#torch.cos(t)
 
+    import matplotlib
+
+    matplotlib.rcParams['text.usetex'] = True
+    import matplotlib.pyplot as plt
+
     sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=2,
-                    rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-                        'lines.linewidth': 2})
+    sns.set_context("paper", font_scale=3,
+                    rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 30, "axes.legendsize": 20,
+                        'lines.linewidth': 2.5})
     sns.set_palette('deep')
+    sns.set_color_codes(palette='deep')
 
 
-    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc)
+    wout_gen = Transformer_Analytic(fb,ft,lbc,rbc,rho)
 
     func.load_state_dict(torch.load('func_ffnn_helm_2',map_location=torch.device('cpu')))
     func.eval()
 
-    x_evals = torch.linspace(xl, xr, 200)
-    y_evals = torch.linspace(t0, tmax, 200)
+    x_evals = torch.linspace(xl, xr, 500)
+    y_evals = torch.linspace(t0, tmax, 500)
     x_evals.requires_grad = True
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
@@ -444,46 +451,53 @@ if __name__ == '__main__':
     kval = torch.tensor(0.)
     # print(grid_t[:,0], grid_x[:,0])
 
-    # x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
-    # y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
-    # x_evals1.requires_grad = True
-    # y_evals1.requires_grad = True
-    # grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
-    #
+    x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
+    y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
+    x_evals1.requires_grad = True
+    y_evals1.requires_grad = True
+    grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
+
     # grid_xx = grid_x1.ravel()
     # grid_tt = grid_t1.ravel()
-
-    kvals = torch.linspace(1.,4.,100)
-
-    t1 = time.time()
-    WOUT,WOUT1 = wout_gen.get_wout(func,grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_t,grid_x,kvals)
-    print(f'time:{time.time()-t1}')
-    tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
-
-    H = func.hidden_states(tv,xv)
-    # Htt = diff(H,tv,2)
-    # Hxx = diff(H,xv,2)
-
-    H = torch.cat([H,torch.ones(len(H),1)],1)
+    #
+    # kvals = torch.linspace(1.,4.,100)
+    #
+    # t1 = time.time()
+    # WOUT,WOUT1 = wout_gen.get_wout(func,grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_t,grid_x,kvals)
+    # print(f'time:{time.time()-t1}')
+    # tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
+    #
+    # H = func.hidden_states(tv,xv)
+    # # Htt = diff(H,tv,2)
+    # # Hxx = diff(H,xv,2)
+    #
+    # H = torch.cat([H,torch.ones(len(H),1)],1)
     # Htt = torch.cat([Htt, torch.zeros(len(H), 1)], 1)
     # Hxx = torch.cat([Hxx, torch.zeros(len(H), 1)], 1)
 
     with torch.no_grad():
-        # out_pred = (H@WOUT)
-        out_pred1 = (H@WOUT1)
+        # out_pred = (H@WOUT).numpy()
+        # out_pred1 = (H@WOUT1).numpy()
+
+        # np.save('out_pred.npy',out_pred)
+        # np.save('out_pred1.npy',out_pred1)
+
+        out_pred = np.load('out_pred.npy')
+        out_pred1 = np.load('out_pred1.npy')
+
         # print((out_pred))
         # loss_test =Htt@WOUT + Hxx@WOUT -rho(tv,xv)
         # loss_test1 = Htt @ WOUT1 + Hxx @ WOUT1 - rho(tv, xv)
 
-        u_true = torch.cat([u_analytic(xv, tv, kv).reshape(-1,1) for kv in kvals],1)
+        # u_true = torch.cat([u_analytic(xv, tv, kv).reshape(-1,1) for kv in kvals],1)
 
-        # u_true = 1./4*(2*u_analytic(grid_x,grid_t,1)-4*u_analytic(grid_x,grid_t,2)+6*u_analytic(grid_x,grid_t,3)-8*u_analytic(grid_x,grid_t,4))
+        u_true = 1./4*(2*u_analytic(grid_x,grid_t,1)-4*u_analytic(grid_x,grid_t,2)+6*u_analytic(grid_x,grid_t,3)-8*u_analytic(grid_x,grid_t,4))
 
         # s1 = out_pred.reshape(len(x_evals), len(y_evals)).t()
         # s2 = out_pred1.reshape(len(x_evals), len(y_evals)).t()
 
         # print(f'error:{((s1-u_true)**2).mean()}')
-        print(f'error1:{((out_pred1 - u_true) ** 2).mean(),((out_pred1 - u_true) ** 2).std()}')
+        # print(f'error1:{((out_pred1 - u_true) ** 2).mean(),((out_pred1 - u_true) ** 2).std()}')
 
         # plt.figure()
         # contours = plt.contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), 6, colors='black')
@@ -496,23 +510,41 @@ if __name__ == '__main__':
         #
         # plt.savefig('helm_2_qr.pdf',dpi=2400,bbox_inches='tight')
         #
-        # # fig, ax = plt.subplots(1,1, figsize=(10, 5))
-        # plt.figure()
-        # contours = plt.contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),levels= 8, colors='black')
-        # plt.clabel(contours, inline=True, fontsize=6)
-        # plt.contourf(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),alpha=0.9,levels=8)
-        # # fig.colorbar(pc,ax=ax[0])
-        # plt.xlabel('x')
-        # plt.ylabel('t')
+        # fig, ax = plt.subplots(1,1, figsize=(10, 5))
+
+        plt.figure()
+        cmp=sns.color_palette("rocket", as_cmap=True)
+        plt.contourf(x_evals, y_evals, np.transpose(out_pred.reshape(len(x_evals), len(y_evals))),levels=20,cmap=cmp)
+        plt.xlabel(r'$x$')
+        plt.ylabel(r'$y$')
+        plt.colorbar()
+        plt.savefig('helm_2_qr.pdf', dpi=2400, bbox_inches='tight')
+
+
+
+        plt.figure(figsize=(8,6))
+        cmp=sns.color_palette("rocket", as_cmap=True)
+        plt.contourf(x_evals, y_evals, np.transpose(out_pred1.reshape(len(x_evals), len(y_evals))),levels=20,cmap=cmp)
         # plt.colorbar()
-        #
-        # # pc = ax[1].contour(x_evals, y_evals, (loss_test ** 2).reshape(len(x_evals), len(y_evals)).t(), 30)
-        # # ax[1].set_xlabel('x')
-        # # ax[1].set_ylabel('t')
-        # # fig.colorbar(pc, ax=ax[1])
-        #
-        # plt.savefig('helm_2_solver.pdf', dpi=2400, bbox_inches='tight')
-        #
+        plt.xlabel(r'$x$')
+        plt.ylabel(r'$y$')
+        plt.colorbar(format='%.0e')
+        plt.savefig('helm_2_solver_v2.pdf', dpi=2400, bbox_inches='tight')
+
+        plt.figure(figsize=(8,6))
+        cmp = sns.color_palette("rocket", as_cmap=True)
+        errf = (np.transpose(out_pred1.reshape(len(x_evals), len(y_evals)))-u_true.numpy())**2
+        print(errf.min())
+        plt.contourf(x_evals, y_evals,errf , cmap=cmp)
+        # plt.colorbar()
+        plt.xlabel(r'$x$')
+        plt.ylabel(r'$y$')
+        plt.colorbar(format='%.0e')
+        plt.savefig('helm_2_solver_error.pdf', dpi=2400, bbox_inches='tight')
+
+
+
+
         # # pc = ax[1].contour(x_evals, y_evals, out_pred1.reshape(len(x_evals), len(y_evals)).t(),20)
         # # pc = ax[0].contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t())
         #

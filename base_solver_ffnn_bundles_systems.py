@@ -13,6 +13,8 @@ from torchdiffeq import odeint_adjoint as odeint
 from mpl_toolkits.mplot3d import Axes3D
 import random
 import seaborn as sns
+import matplotlib
+matplotlib.rcParams['text.usetex'] = True
 
 parser = argparse.ArgumentParser('transfer demo')
 
@@ -46,8 +48,15 @@ class diffeq(nn.Module):
         return get_udot(y)
 
 def get_udot(y):
-    Amatrix = torch.tensor([[0., 1.], [-1., 0.]])
-    yd = Amatrix @ y.t()
+    # Amatrix = torch.tensor([[0., 1.], [-1., 0.]])
+    # yd = Amatrix @ y.t()
+    # return yd.t()
+    m1,m2 = 1.,1.
+    k1,k2 = 2.,4.
+    Lmat = torch.tensor([[m1, 0.], [0., m2]])
+    Rmat = torch.tensor([[k1 + k2, -k2], [-k2, k1 + k2]])
+    Amatrix = Rmat
+    yd = -Amatrix @ y.t()
     return yd.t()
 
 class SiLU(nn.Module):
@@ -73,7 +82,7 @@ class base_diffeq:
 
     def get_solution(self, true_y0, t):
         with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='dopri5')
+            true_y = odeint(self.base, true_y0, t, method='dopri8')
         return true_y
 
     def get_deriv(self, true_y0, t):
@@ -451,20 +460,19 @@ if __name__ == '__main__':
     Mblock = get_block_m(m1, m2)
     Kblock = get_block_k(k1, k2)
 
-    # print(Mblock)
-
-    sns.set_palette('deep')
 
     sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=2,
+    sns.set_context("paper", font_scale=2.3,
                     rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
                         'lines.linewidth': 2.5})
+
     sns.set_palette('deep')
+    sns.set_color_codes(palette='deep')
 
-    import matplotlib
-
-    matplotlib.rcParams['text.usetex'] = True
-    import matplotlib.pyplot as plt
+    # import matplotlib
+    #
+    # matplotlib.rcParams['text.usetex'] = True
+    # import matplotlib.pyplot as plt
 
     losses = []
     #
@@ -472,11 +480,14 @@ if __name__ == '__main__':
     pred_yds = []
 
 #   dummy test
-    with torch.no_grad():
-        s1 = time.time()
-        wout = get_wout(h, hd, hdd, torch.rand(1000,2), torch.rand(1000,2), m1, m2, k1, k2, t.detach())
-        print('1oo')
-        print(time.time() - s1)
+#     with torch.no_grad():
+#         s1 = time.time()
+#         wout = get_wout(h, hd, hdd, torch.rand(1000,2), torch.rand(1000,2), m1, m2, k1, k2, t.detach())
+#         print('1oo')
+#         print(time.time() - s1)
+#
+
+    # gt_solution = gt_generator.get_solution(torch.tensor([[1.,0.]]),t.ravel())
 
 
 
@@ -516,30 +527,37 @@ if __name__ == '__main__':
 
             loss_diffeq = (Mblock @ pred_yddot.t()).t() + (Kblock @ pred_y.t()).t()
 
-        pred_ys.append(pred_y)
-        pred_yds.append(pred_yd)
+            pred_ys.append(pred_y)
+            pred_yds.append(pred_yd)
+        if i == 0:
+            print(pred_ys[-1])
     # print(loss_diffeq)
         losses.append((loss_diffeq**2).mean(1).detach().numpy())
     print('final loss mean')
     print(np.mean(losses),np.std(losses))
+
+
+
     f, (a0) = plt.subplots(1,1, figsize=(6, 6))
 
     for i,(pred_y,pred_yd) in enumerate(zip(pred_ys,pred_yds)):
         if i ==0:
-            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='green',label=r'$x_1$')
-            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='royalblue',label=r'$x_2$')
+            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='g',label=r'$x_1$',linewidth=5)
+            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='b',label=r'$x_2$',linewidth=5)
+            # a0.plot(gt_solution.cpu().numpy()[:, 0, 0], gt_solution.cpu().numpy()[:, 1,0], linestyle='--', color='black')
+
             # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 0],c='green')
             # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 1],c='royalblue')
 
         else:
-            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.05)
-            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.05)
+            a0.plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.02)
+            a0.plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.02)
 
             # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 0], c='black', alpha=0.05)
             # a1.plot(np.arange(len(pred_y))*args.dt,pred_y[:, 1], c='black', alpha=0.05)
 
-        a0.set_xlabel(r'$z$')
-        a0.set_ylabel(r'$\dot{z}$')
+        a0.set_xlabel(r'$\psi$')
+        a0.set_ylabel(r'$\dot{\psi}$')
 
         # a1.set_ylabel(r'$z$')
         # print(losses)
@@ -555,7 +573,7 @@ if __name__ == '__main__':
         # a1.get_shared_x_axes().join(a1,a2)
         # a2.sharex(a1)
         plt.legend()
-        plt.tight_layout()
+        # plt.tight_layout()
 
         # plt.tight_layout()
         plt.savefig('beats_ics_1.pdf',dpi=2400,bbox_inches='tight')
@@ -567,20 +585,23 @@ if __name__ == '__main__':
         if i == 0:
             # a0.plot(pred_y[:, 0], pred_yd[:, 0],c='green',label=r'$x_1$')
             # a0.plot(pred_y[:, 1], pred_yd[:, 1],c='royalblue',label=r'$x_2$')
-            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='green')
-            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='royalblue')
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='g',linewidth=5)
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='b',linewidth=5)
+
+            # a1.plot(np.arange(len(pred_y)) * args.dt, gt_solution[:, 0,0], c='black',linestyle='--')
+            # a1.plot(np.arange(len(pred_y)) * args.dt, gt_solution[:, 0, 1], c='black', linestyle='--')
 
         else:
             # a0.plot(pred_y[:, 0], pred_yd[:, 0],c='black',alpha=0.05)
             # a0.plot(pred_y[:, 1], pred_yd[:, 1],c='black',alpha=0.05)
 
-            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='black', alpha=0.05)
-            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='black', alpha=0.05)
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 0], c='black', alpha=0.02)
+            a1.plot(np.arange(len(pred_y)) * args.dt, pred_y[:, 1], c='black', alpha=0.02)
 
         # a0.set_xlabel(r'$z$')
         # a0.set_ylabel(r'$\dot{z}$')
 
-    a1.set_ylabel(r'$z$')
+    a1.set_ylabel(r'$\psi$')
         # print(losses)
         # a1.set_xticks([])
         # a1.set_xticks([])
@@ -596,7 +617,7 @@ if __name__ == '__main__':
     # plt.legend()
     # plt.tight_layout()
 
-    plt.tight_layout()
+    # plt.tight_layout()
     plt.savefig('beats_ics_2.pdf', dpi=2400, bbox_inches='tight')
     #
         #

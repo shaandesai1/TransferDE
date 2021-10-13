@@ -460,12 +460,12 @@ if __name__ == '__main__':
         f, (a0,a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [4, 1]},figsize=(6,8))
         for i in range(args.num_bundles_test):
             if i < 5:
-                a0.plot(pred_y[:, i], pred_yd[:, i], label='pred', c='#F39C12',alpha=1,linewidth=3)
+                a0.plot(pred_y[:, i], pred_yd[:, i], label='pred', c='g',alpha=1,linewidth=3)
             else:
-                a0.plot(pred_y[:,i],pred_yd[:,i],label='pred',c='b',linewidth=3)
+                a0.plot(pred_y[:,i],pred_yd[:,i],label='pred',c='b',linewidth=4)
                 a0.plot(true_y[:,i,0],true_y[:,i,1],label='gt',linestyle='--',c='black',linewidth=2)
-        a0.set_xlabel(r'$q$')
-        a0.set_ylabel(r'$\dot{q}$')
+        a0.set_xlabel(r'$\psi$')
+        a0.set_ylabel(r'$\dot{\psi}$')
 
         a1.set_yscale('log')
         a1.plot(np.arange(len(loss_diffeq))*args.dt,(loss_diffeq**2).mean(1),c='royalblue')
