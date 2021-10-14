@@ -24,7 +24,7 @@ parser.add_argument('--niters', type=int, default=15000)
 parser.add_argument('--niters_test', type=int, default=5000)
 parser.add_argument('--hidden_size', type=int, default=100)
 parser.add_argument('--num_bundles', type=int, default=5)
-parser.add_argument('--num_bundles_test', type=int, default=17)
+parser.add_argument('--num_bundles_test', type=int, default=30)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
@@ -32,6 +32,7 @@ parser.add_argument('--evaluate_only', action='store_false')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
+torch.set_default_tensor_type('torch.FloatTensor')
 # print(args.evaluate_only==False)
 
 class diffeq(nn.Module):

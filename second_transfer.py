@@ -34,7 +34,7 @@ parser.add_argument('--num_bundles_test', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_true')
+parser.add_argument('--evaluate_only', action='store_false')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
@@ -522,9 +522,15 @@ if __name__ == '__main__':
 
         # residual = ((pred_y.cpu().numpy()[:, :] - true_y.cpu().numpy()[:, :, 0])**2 + (true_y.cpu().numpy()[:, :, 1]-pred_yd.cpu().numpy()[:, :])**2)/2.
         # print(residual.shape,residual.min())
-        a1.set_yscale('log')
-        a1.plot(np.arange(len(current_residual))*(args.tmax/len(current_residual)),current_residual.numpy(),c='royalblue')
-        xv = np.arange(len(current_residual))*(args.tmax/len(current_residual))
+        xv = np.arange(len(current_residual)) * (args.tmax / len(current_residual))
+
+        a1.plot(xv,(current_residual).numpy(),c='royalblue')
+        # a1.plot(xv, (current_residual-current_err).numpy(), c='red')
+        # a1.plot(xv, (current_residual + current_err).numpy(), c='red')
+
+        a1.fill_between(xv,(current_residual-current_err).numpy(),(current_residual+current_err).numpy(),alpha=0.2)
+        # a1.set_ylim([1e-10,5e-8])
+        a1.set_yscale('symlog')
 
         # a1.fill_between(xv, current_residual-current_err, current_residual+current_err)
         print(torch.mean(current_residual))

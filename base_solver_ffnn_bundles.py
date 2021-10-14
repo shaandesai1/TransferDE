@@ -28,9 +28,13 @@ parser.add_argument('--num_bundles_test', type=int, default=1000)
 parser.add_argument('--test_freq', type=int, default=20)
 parser.add_argument('--viz', action='store_false')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
 scaler = MinMaxScaler()
+
+
+torch.set_default_tensor_type('torch.DoubleTensor')
+
 
 # print(args.evaluate_only==False)
 
@@ -47,6 +51,7 @@ class diffeq(nn.Module):
 
     # return ydot
     def forward(self, t, states):
+        # print()
         y = states[:, 0].reshape(1, -1)
         yd = get_udot(t, y, self.a0,self.f)  # (-self.a1(t) * yd - self.a0(t) * y + self.f(t)).reshape(-1, 1)
         return yd.reshape(-1,1)
@@ -313,9 +318,9 @@ if __name__ == '__main__':
     a0_samples = random.choices(a0_train, k=args.num_bundles)
     y0_samples = torch.tensor(random.choices(true_y0, k=args.num_bundles)).reshape(1,-1)
 
-    # diffeq_init = diffeq(a0_samples,f_samples)
-    # gt_generator = base_diffeq(diffeq_init)
-    # true_y = gt_generator.get_solution(y0_samples,t.ravel()).reshape(-1,args.num_bundles)
+    diffeq_init = diffeq(a0_samples,f_samples)
+    gt_generator = base_diffeq(diffeq_init)
+    true_y = gt_generator.get_solution(y0_samples.reshape(-1,1),t.ravel()).reshape(-1,args.num_bundles)
 
     # use this quick test to find gt solutions and check training ICs
     # have a solution (don't blow up for dopri5 integrator)

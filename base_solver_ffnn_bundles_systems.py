@@ -32,6 +32,8 @@ parser.add_argument('--evaluate_only', action='store_false')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
+torch.set_default_tensor_type('torch.DoubleTensor')
+
 # print(args.evaluate_only==False)
 
 class diffeq(nn.Module):

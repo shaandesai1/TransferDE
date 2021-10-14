@@ -34,7 +34,7 @@ args = parser.parse_args()
 # torch.set_default_tensor_type('torch.cuda.FloatTensor')
 # torch.backends.cudnn.benchmark = True
 
-
+torch.set_default_tensor_type('torch.DoubleTensor')
 
 class SiLU(nn.Module):
     def __init__(self):
@@ -158,7 +158,7 @@ class Transformer_Analytic(nn.Module):
             return torch.cat([var,torch.zeros(len(var),1)],1)
     def get_wout(self, func,t,x,grid_t,grid_x,ks):
 
-        zindices = np.random.choice(len(t), 800,replace=False)
+        zindices = np.random.choice(len(t), 500,replace=False)
         # print(zindices)
         t = t[zindices, :].reshape(-1, 1)
         x = x[zindices, :].reshape(-1, 1)
@@ -183,7 +183,7 @@ class Transformer_Analytic(nn.Module):
         DH = (d2Hdt2+d2Hdx2)
 
 
-        xindices = np.random.choice(len(grid_t),100,replace=False)
+        xindices = np.random.choice(len(grid_t),150,replace=False)
 
         H0 = func.hidden_states(grid_t[xindices,0].reshape(-1,1),grid_x[xindices,0].reshape(-1,1))
         H0 = self.append_ones(H0)
@@ -457,33 +457,33 @@ if __name__ == '__main__':
     y_evals1.requires_grad = True
     grid_x1, grid_t1 = torch.meshgrid(x_evals1, y_evals1)
 
-    # grid_xx = grid_x1.ravel()
-    # grid_tt = grid_t1.ravel()
+    grid_xx = grid_x1.ravel()
+    grid_tt = grid_t1.ravel()
+
+    kvals = torch.linspace(1.,4.,100)
+
+    t1 = time.time()
+    WOUT,WOUT1 = wout_gen.get_wout(func,grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_t1,grid_x1,kvals)
+    print(f'time:{time.time()-t1}')
+    tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
     #
-    # kvals = torch.linspace(1.,4.,100)
-    #
-    # t1 = time.time()
-    # WOUT,WOUT1 = wout_gen.get_wout(func,grid_t.reshape(-1,1),grid_x.reshape(-1,1),grid_t,grid_x,kvals)
-    # print(f'time:{time.time()-t1}')
-    # tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
-    #
-    # H = func.hidden_states(tv,xv)
+    H = func.hidden_states(tv,xv)
     # # Htt = diff(H,tv,2)
     # # Hxx = diff(H,xv,2)
     #
-    # H = torch.cat([H,torch.ones(len(H),1)],1)
+    H = torch.cat([H,torch.ones(len(H),1)],1)
     # Htt = torch.cat([Htt, torch.zeros(len(H), 1)], 1)
     # Hxx = torch.cat([Hxx, torch.zeros(len(H), 1)], 1)
 
     with torch.no_grad():
-        # out_pred = (H@WOUT).numpy()
-        # out_pred1 = (H@WOUT1).numpy()
+        out_pred = (H@WOUT).numpy()
+        out_pred1 = (H@WOUT1).numpy()
 
         # np.save('out_pred.npy',out_pred)
         # np.save('out_pred1.npy',out_pred1)
 
-        out_pred = np.load('out_pred.npy')
-        out_pred1 = np.load('out_pred1.npy')
+        # out_pred = np.load('out_pred.npy')
+        # out_pred1 = np.load('out_pred1.npy')
 
         # print((out_pred))
         # loss_test =Htt@WOUT + Hxx@WOUT -rho(tv,xv)
@@ -493,11 +493,13 @@ if __name__ == '__main__':
 
         u_true = 1./4*(2*u_analytic(grid_x,grid_t,1)-4*u_analytic(grid_x,grid_t,2)+6*u_analytic(grid_x,grid_t,3)-8*u_analytic(grid_x,grid_t,4))
 
-        # s1 = out_pred.reshape(len(x_evals), len(y_evals)).t()
-        # s2 = out_pred1.reshape(len(x_evals), len(y_evals)).t()
+        s1 = np.transpose(out_pred.reshape(len(x_evals), len(y_evals)))
+        s2 = np.transpose(out_pred1.reshape(len(x_evals), len(y_evals)))
 
-        # print(f'error:{((s1-u_true)**2).mean()}')
-        # print(f'error1:{((out_pred1 - u_true) ** 2).mean(),((out_pred1 - u_true) ** 2).std()}')
+        print(s1,s2,u_true.numpy())
+
+        print(f'error:{((s1-u_true.numpy())**2).mean()}')
+        print(f'error1:{((s2 - u_true.numpy()) ** 2).mean(),((s2 - u_true.numpy()) ** 2).std()}')
 
         # plt.figure()
         # contours = plt.contour(x_evals, y_evals, out_pred.reshape(len(x_evals), len(y_evals)).t(), 6, colors='black')
