@@ -7,11 +7,9 @@ import argparse
 import torch.optim as optim
 import numpy as np
 import time
-from sklearn.decomposition import PCA
 from sklearn.preprocessing import MinMaxScaler
 from torchdiffeq import odeint_adjoint as odeint
-from mpl_toolkits.mplot3d import Axes3D
-import random
+from utils import *
 import seaborn as sns
 
 torch.manual_seed(33)
@@ -28,7 +26,7 @@ parser.add_argument('--num_bundles_test', type=int, default=30)
 parser.add_argument('--test_freq', type=int, default=100)
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
+parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
 scaler = MinMaxScaler()
 
@@ -51,7 +49,6 @@ class diffeq(nn.Module):
         ydd = get_udot(t,y)#(-self.a1(t) * yd - self.a0(t) * y + self.f(t)).reshape(-1, 1)
         return torch.cat([yd.reshape(-1,1), ydd.reshape(-1,1)], 1)
 
-# get_udot(tv,pred_y,pred_ydot,a1_samples,a0_samples,f_samples)
 
 def get_udot(t,y):
 
@@ -70,44 +67,6 @@ class SiLU(nn.Module):
         Forward pass of the function.
         '''
         return torch.sin(input)
-
-
-class base_diffeq:
-    """
-    integrates base_solver given y0 and time
-    """
-
-    def __init__(self, base_solver):
-        self.base = base_solver
-
-    def get_solution(self, true_y0, t):
-        with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='dopri5')
-        return true_y
-
-    def get_deriv(self, true_y0, t):
-        with torch.no_grad():
-            true_ydot = self.base(t, true_y0)
-        return true_ydot
-
-
-class estim_diffeq:
-    """
-    integrates base_solver given y0 and time
-    """
-
-    def __init__(self, base_solver):
-        self.base = base_solver
-
-    def get_solution(self, true_y0, t):
-        with torch.no_grad():
-            true_y = odeint(self.base, true_y0, t, method='midpoint')
-        return true_y
-
-    def get_deriv(self, true_y0, t):
-        with torch.no_grad():
-            true_ydot = self.base(t, true_y0)
-        return true_ydot
 
 
 class ODEFunc(nn.Module):
@@ -144,47 +103,8 @@ def get_ham(q,p):
     return (q**2)/2 + (q**4)/4 + (p**2)/2
 
 
-def diff(u, t, order=1):
-    # code adapted from neurodiffeq library
-    # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
-    r"""The derivative of a variable with respect to another.
-    """
-    # ones = torch.ones_like(u)
-
-    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])], 1)
-    if der is None:
-        print('derivative is None')
-        return torch.zeros_like(t, requires_grad=True)
-    else:
-        der.requires_grad_()
-    for i in range(1, order):
-
-        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])], 1)
-        # print()
-        if der is None:
-            print('derivative is None')
-            return torch.zeros_like(t, requires_grad=True)
-        else:
-            der.requires_grad_()
-    return der
-
-
-class Transformer_Learned(nn.Module):
-    """
-    returns Wout learnable, only need hidden and output dims
-    """
-
-    def __init__(self, input_dims, output_dims):
-        super(Transformer_Learned, self).__init__()
-        self.lin1 = nn.Linear(input_dims, output_dims)
-
-    def forward(self, x):
-        return self.lin1(x)
-
-
 # h, hd, hdd, true_y0, t.detach(), a1_train, a0_train, f_train)
 def get_wout(s, sd,sdd, y0s, t,a1s,a0s,fs):
-    # y0 = torch.stack([y0 for _ in range(len(s))]).reshape(len(s), -1)
 
     a0_batch = torch.cat([var_(t) for var_ in a0s], 1)
     a1_batch = torch.cat([var_(t) for var_ in a1s], 1)
@@ -204,12 +124,9 @@ def get_wout(s, sd,sdd, y0s, t,a1s,a0s,fs):
         h0d = sd[0].reshape(-1, 1)
         W0 = torch.linalg.solve(DH.t() @ DH + h0m @ h0m.t() + h0d @ h0d.t(),
                                 -DH.t() @ D0 + h0m @ (y0[:,0].reshape(1, -1)) + h0d @ (y0[:,1].reshape(1, -1)))
-        # print(W0.shape)
         WS.append(W0)
     nWS = (torch.cat(WS)).reshape(f_batch.shape[1],-1)
     return nWS.t()
-
-import matplotlib.pyplot as plt
 
 if args.viz:
     import matplotlib.pyplot as plt
@@ -233,9 +150,6 @@ def visualize(true_y, pred_y,pred_ydot, lst,t):
             ax_traj.plot(pred_y.cpu().numpy()[:,i], pred_ydot.cpu().numpy()[:, i])
         ax_phase.set_yscale('log')
         ax_phase.plot(np.arange(len(lst)), lst)
-
-        # ax_traj.legend()
-
         plt.draw()
         plt.pause(0.001)
 
@@ -284,14 +198,9 @@ if __name__ == '__main__':
             # add t0 to training times, including randomly generated ts
             t0 = torch.tensor([[0.]])
             t0.requires_grad = True
-
-            # tmax = torch.tensor([[4*np.pi]])
-            # tmax.requires_grad = True
-
             tr = args.tmax * torch.rand(int(args.tmax / args.dt)).reshape(-1, 1)
             tr.requires_grad = True
             tv = torch.cat([t0, tr], 0)
-            # tv.requires_grad = True
             optimizer.zero_grad()
 
             # compute hwout,hdotwout
@@ -302,20 +211,13 @@ if __name__ == '__main__':
             # enforce diffeq
             # get_udot(t, y, yd, a1, a0, f)
             loss_diffeq = pred_yddot - get_udot(tv,pred_y)
-            # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
-            #     tv.detach()).reshape(-1, 1)
-            # print(pred_y[0,:])
-            # print(pred_y[-1,:])
             # enforce initial conditions
             loss_ics = torch.mean((pred_y[0, :].ravel() - true_y0[:args.num_bundles,0].ravel())**2) + torch.mean((pred_ydot[0,:].ravel()-true_y0[:args.num_bundles,1].ravel())**2)
-
-            # print(loss_ics)
 
             loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(loss_ics) +  torch.mean(((get_ham(pred_y,pred_ydot))-(get_ham(true_y0[:args.num_bundles,0].reshape(1,-1),true_y0[:args.num_bundles,1].reshape(1,-1))))**2)
             loss.backward()
             optimizer.step()
             loss_collector.append(torch.square(loss_diffeq).mean().item())
-            # print(loss_collector[-1])
             if itr % args.test_freq == 0:
                 func.eval()
                 pred_y = func(t)
@@ -326,34 +228,14 @@ if __name__ == '__main__':
                 pred_ydot = pred_ydot.detach()
                 pred_yddot = pred_yddot.detach()
 
-                # loss_diffeq =
-
-                # pred_y = pred_y.reshape(-1, args.num_bundles)
                 visualize(true_y.detach(), pred_y.detach(),pred_ydot, loss_collector,t.detach())
                 ii += 1
-
-                # current_residual = (pred_yddot - get_udot(t, pred_y, pred_ydot, a1_samples, a0_samples, f_samples)) ** 2
-                # print(current_residual.shape)
-                # print((current_residual.mean(0)))
-
-
                 current_residual = torch.mean((pred_yddot - get_udot(tv, pred_y))**2)
-                # print(current_residual)
                 if current_residual < best_residual:
-
                     torch.save(func.state_dict(), 'func_ffnn_bundles_nonlin')
                     best_residual = current_residual
                     print(itr,best_residual)
-        # torch.save(func.state_dict(), 'func_ffnn_bundles')
 
-    # with torch.no_grad():
-
-    # f_test = [lambda t: torch.sin(t)]
-    # # keep fixed to one list element - else need to do tensor math to compute Wout
-    # a0_test = [lambda t: t**3]
-    # r1 = -15.
-    # r2 = 15.
-    # true_y0 = (r2 - r1) * torch.rand(100) + r1
 
     func.load_state_dict(torch.load('func_ffnn_bundles_nonlin'))
     func.eval()
@@ -377,16 +259,9 @@ if __name__ == '__main__':
     hd = hd.detach()
     hdd = hdd.detach()
 
-
-
-
     new_net = Transformer_Learned(h.shape[1],args.num_bundles_test)
-
     optimizer = optim.Adam(new_net.parameters(), lr=1e-3)
-
     loss_collector = []
-
-# best_residual = 1e-1
 
     s1 = time.time()
     for itr in range(1, args.niters_test + 1):
@@ -402,15 +277,10 @@ if __name__ == '__main__':
         # enforce diffeq
         # get_udot(t, y, yd, a1, a0, f)
         loss_diffeq = pred_yddot - get_udot(t, pred_y)
-        # loss_diffeq = (a1(tv.detach()).reshape(-1, 1)) * pred_ydot + (a0(tv.detach()).reshape(-1, 1)) * pred_y - f(
-        #     tv.detach()).reshape(-1, 1)
-        # print(pred_y[0,:])
-        # print(pred_y[-1,:])
         # enforce initial conditions
         loss_ics = torch.mean((pred_y[0, :].ravel() - true_y0[:, 0].ravel()) ** 2) + torch.mean(
             (pred_ydot[0, :].ravel() - true_y0[:, 1].ravel()) ** 2)
 
-        # print(loss_ics)
         loss = torch.mean(torch.square(loss_diffeq)) + torch.mean(loss_ics) + torch.mean(((get_ham(pred_y,
                                                                                                    pred_ydot)) - (
                                                                                               get_ham(true_y0[
@@ -429,10 +299,6 @@ if __name__ == '__main__':
     print('error')
     print(np.mean((loss_diffeq**2).detach().numpy()),np.std((loss_diffeq**2).detach().numpy()))
 
-    # sns.set_palette('deep')
-
-
-    # sns.set_palette('deep')
     import matplotlib
     matplotlib.rcParams['text.usetex'] = True
     import matplotlib.pyplot as plt
@@ -443,12 +309,6 @@ if __name__ == '__main__':
                         'lines.linewidth': 2.5})
     sns.set_palette('deep')
     sns.set_color_codes(palette='deep')
-    #
-    # sns.axes_style(style='ticks')
-    # sns.set_context("paper", font_scale=2,
-    #                 rc={"font.size": 10, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-    #                     'lines.linewidth': 2})
-    # sns.set_palette('deep')
 
 
     with torch.no_grad():

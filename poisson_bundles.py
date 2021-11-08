@@ -8,7 +8,7 @@ import torch.optim as optim
 import numpy as np
 import time
 import seaborn as sns
-from matplotlib import ticker, cm
+from utils import *
 
 torch.manual_seed(33)
 
@@ -26,13 +26,9 @@ parser.add_argument('--bs', type=int, default=100)
 
 parser.add_argument('--viz', action='store_true')
 parser.add_argument('--gpu', type=int, default=0)
-parser.add_argument('--evaluate_only', action='store_false')
-import matplotlib.pyplot as plt
+parser.add_argument('--evaluate_only', action='store_true')
 args = parser.parse_args()
-# from torchdiffeq import odeint_adjoint as odeint
 
-# torch.set_default_tensor_type('torch.cuda.FloatTensor')
-# torch.backends.cudnn.benchmark = True
 
 torch.set_default_tensor_type('torch.DoubleTensor')
 
@@ -85,54 +81,6 @@ class ODEFunc(nn.Module):
     def wouts(self, x):
         return self.lout(x)
 
-def diff(u, t, order=1):
-    # code adapted from neurodiffeq library
-    # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
-    r"""The derivative of a variable with respect to another.
-    While there's no requirement for shapes, errors could occur in some cases.
-    See `this issue <https://github.com/NeuroDiffGym/neurodiffeq/issues/63#issue-719436650>`_ for details
-    :param u: The :math:`u` in :math:`\displaystyle\frac{\partial u}{\partial t}`.
-    :type u: `torch.Tensor`
-    :param t: The :math:`t` in :math:`\displaystyle\frac{\partial u}{\partial t}`.
-    :type t: `torch.Tensor`
-    :param order: The order of the derivative, defaults to 1.
-    :type order: int
-    :returns: The derivative evaluated at ``t``.
-    :rtype: `torch.Tensor`
-    """
-    # ones = torch.ones_like(u)
-
-
-    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])],1)
-    if der is None:
-        print('derivative is None')
-        return torch.zeros_like(t, requires_grad=True)
-    else:
-        der.requires_grad_()
-    for i in range(1, order):
-
-        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
-        # print()
-        if der is None:
-            print('derivative is None')
-            return torch.zeros_like(t, requires_grad=True)
-        else:
-            der.requires_grad_()
-    return der
-
-
-class Transformer_Learned(nn.Module):
-    """
-    returns Wout learnable, only need hidden and output dims
-    """
-
-    def __init__(self, input_dims, output_dims):
-        super(Transformer_Learned, self).__init__()
-        self.lin1 = nn.Linear(args.hidden_size, output_dims)
-
-    def forward(self, x):
-        return self.lin1(x)
-
 
 class Transformer_Analytic(nn.Module):
     """
@@ -163,26 +111,12 @@ class Transformer_Analytic(nn.Module):
         t = t[zindices, :].reshape(-1, 1)
         x = x[zindices, :].reshape(-1, 1)
 
-        # print('enter wout')
-        # s1=time.time()
-        print('a')
         H = func.hidden_states(t,x)#torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
-        print('b')
-        # aa = diff(H,t)
         d2Hdt2 = torch.cat([diff(H,t,2),torch.zeros(len(H),1)],1)
-        print('c')
-        # bb = diff(H,x)
         d2Hdx2 =torch.cat([diff(H,x,2),torch.zeros(len(H),1)],1)
-
-        # H = torch.cat([H,torch.ones(len(H),1)],1)
-        # H = torch.cat([H,torch.ones(len(H),1)],1)
-        # s2 = time.time()
-        # print(s2-s1)
         rho = self.rho(t.reshape(-1,1),x.reshape(-1,1))#torch.cat([get_rho(t.reshape(-1,1),x.reshape(-1,1),ks_val,0,ks_val,0).reshape(-1,1) for ks_val in ks],1)
 
         DH = (d2Hdt2+d2Hdx2)
-
-
         xindices = np.random.choice(len(grid_t),150,replace=False)
 
         H0 = func.hidden_states(grid_t[xindices,0].reshape(-1,1),grid_x[xindices,0].reshape(-1,1))
@@ -259,61 +193,24 @@ def u_analytic(x,y,k):
 def get_rho(t,x,x01,y01,x02,y02):
     X=x
     Y=t
-    # A = 10;
-    # # x0 = xmid;
-    # # y0 = tmid;
-    # theta = torch.tensor(0.)
-    # sigma_X = 0.1
-    # sigma_Y = 0.1
-    # radius = 0.2
-    # rho = torch.zeros_like(X)
-    # for j in range(len(x)):
-    #     if (X[j]-x01)**2 + (Y[j]-y01)**2 <radius**2:
-    #         rho[j] = -10.
-    #     elif (X[j]-x02)**2 + (Y[j]-y02)**2 <radius**2:
-    #         rho[j] = -10.
-    #     else:
-    #         pass
-    #
-    # tf1 = (X - x01) ** 2 + (Y - y01) ** 2 < radius ** 2
-    # tf2 = (X - x02) ** 2 + (Y - y02) ** 2 < radius ** 2
-
-    return torch.sin(x01*np.pi*X)*torch.sin(x02*np.pi*Y)#(-10*(tf1)-10*tf2)
-    #
-    # return rho
-    # theta = torch.tensor(theta)
-    #
-    # # X, Y = np.meshgrid(np.arange(-5,5,.1), np.arange(-5,5,.1))
-    # a = torch.cos(theta) ** 2 / (2 * sigma_X ** 2) + torch.sin(theta) ** 2 / (2 * sigma_Y ** 2);
-    # b = -torch.sin(2 * theta) / (4 * sigma_X ** 2) + torch.sin(2 * theta) / (4 * sigma_Y ** 2);
-    # c = torch.sin(theta) ** 2 / (2 * sigma_X ** 2) + torch.cos(theta) ** 2 / (2 * sigma_Y ** 2);
-    #
-    # Z1 = A * torch.exp(-(a * (X - (x01)) ** 2 + 2 * b * (X - (x01)) * (Y - y01) + c * (Y - y01) ** 2));
-    # Z2 = A * torch.exp(-(a * (X - (x02)) ** 2 + 2 * b * (X - (x02)) * (Y - y02) + c * (Y - y02) ** 2));
-    # #
-    # return Z1 + Z2
-    # # plt.contour(X, Y, Z);
+    return torch.sin(x01*np.pi*X)*torch.sin(x02*np.pi*Y)
 
 
 if __name__ == '__main__':
 
     ii = 0
     NDIMZ = args.hidden_size
-    xl = 0.#-2*np.pi
-    xr = 1.#2*np.pi#torch.tensor(np.pi)
-    t0 = 0.#-2*np.pi
-    tmax = 1.#2*np.pi#torch.tensor(np.pi)
+    xl = 0.
+    xr = 1.
+    t0 = 0.
+    tmax = 1.
     x_evals = torch.linspace(xl,xr,100)
     y_evals = torch.linspace(t0,tmax,100)
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
     grid_x.requires_grad = True
     grid_t.requires_grad = True
-
-    # print(grid_t[:,0], grid_x[:,0])
-    # print(grid_x)
     grid_x = torch.ravel(grid_x)
     grid_t = torch.ravel(grid_t)
-
 
     # left BC
     bc_left = torch.ones(100)*xl
@@ -325,12 +222,11 @@ if __name__ == '__main__':
     bc_right.requires_grad=True
     ic_t0.requires_grad=True
     ic_tmax.requires_grad=True
-    # wout_gen = Transformer_Analytic()
     func = ODEFunc(hidden_dim=NDIMZ,output_dim=4)
     optimizer = optim.Adam(func.parameters(), lr=1e-3)
 
-    center_xs = torch.tensor([[1.,1.],[2.,2.],[3.,3.],[4.,4.],[1.,1.]])#(10.+10.)*torch.rand(5,2) + -10.
-    center_ys = torch.zeros_like(center_xs)#(7.+7.)*torch.rand(5,2) + -7.
+    center_xs = torch.tensor([[1.,1.],[2.,2.],[3.,3.],[4.,4.],[1.,1.]])
+    center_ys = torch.zeros_like(center_xs)
 
     loss_collector = []
     best_residual = 1e-1
@@ -349,18 +245,12 @@ if __name__ == '__main__':
             d2udt2 = diff(u,t_tr,2)
             d2udx2 = diff(u, x_tr, 2)
 
-            # kvals = torch.tensor([0.,0.,0.,0.,0.]).reshape(1,-1)
             rho1 = get_rho(t_tr,x_tr,center_xs[0,0],center_ys[0,0],center_xs[0,1],center_ys[0,1])
             rho2 = get_rho(t_tr, x_tr, center_xs[1,0],center_ys[1,0],center_xs[1,1],center_ys[1,1])
             rho3 = get_rho(t_tr, x_tr, center_xs[2,0],center_ys[2,0],center_xs[2,1],center_ys[2,1])
             rho4 = get_rho(t_tr, x_tr, center_xs[3,0],center_ys[3,0],center_xs[3,1],center_ys[3,1])
-            # rho5 = get_rho(t_tr, x_tr, center_xs[4,0],center_ys[4,0],center_xs[4,1],center_ys[4,1])
-
-            # print(u.shape,rho1.shape)
 
             rhos = torch.cat([rho1,rho2,rho3,rho4],1)
-
-
             loss_diffeq = torch.mean((d2udt2 + d2udx2 -rhos)**2)
 
             u_t0 = torch.mean((func(ic_t0,x_evals.reshape(-1,1)).ravel() - 0)**2)
@@ -379,7 +269,6 @@ if __name__ == '__main__':
             if itr % args.test_freq == 0:
                 # with torch.no_grad():
                 func.eval()
-                # print(f'diffeq: {loss_collector[-1]}, bcs: {loss_ics.item()}')
                 tvals = grid_t.reshape(-1, 1)
                 xvals = grid_x.reshape(-1,1)
                 u_eval = func(tvals,xvals)
@@ -408,16 +297,14 @@ if __name__ == '__main__':
                     torch.save(func.state_dict(), 'func_ffnn_helm_2')
                     best_residual = current_residual
                     print(itr, best_residual)
-        # torch.save(func.state_dict(), 'func_ffnn_helm_2')
 
     # with torch.no_grad():
     rho = lambda v1,v2: (-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
-    # rho = lambda v1,v2: []#(-1)**(2)*(2)*get_rho(v1,v2,1.,0,1.,0)/4. + (-1)**(3)*(2*2)*get_rho(v1,v2,2.,0,2.,0)/4. + (-1)**(4)*2*3*get_rho(v1,v2,3.,0,3.,0)/4.+(-1)**(5)*2*4*get_rho(v1,v2,4.,0,4.,0)/4.
 
-    ft = lambda t: 0*t#3*torch.sin(t)
-    fb = lambda t: 0*t#torch.sin(t)
-    lbc = lambda t: 0*t#torch.sin(t)
-    rbc = lambda t: 0*t#torch.cos(t)
+    ft = lambda t: 0*t
+    fb = lambda t: 0*t
+    lbc = lambda t: 0*t
+    rbc = lambda t: 0*t
 
     import matplotlib
 
@@ -443,13 +330,7 @@ if __name__ == '__main__':
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
 
-
-    # grid_x.requires_grad = True
-    # grid_t.requires_grad = True
-
-
     kval = torch.tensor(0.)
-    # print(grid_t[:,0], grid_x[:,0])
 
     x_evals1 = torch.linspace(xl+0.01, xr-0.01, 200)
     y_evals1 = torch.linspace(t0+0.01, tmax-0.01, 200)
@@ -468,12 +349,7 @@ if __name__ == '__main__':
     tv,xv = grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)
     #
     H = func.hidden_states(tv,xv)
-    # # Htt = diff(H,tv,2)
-    # # Hxx = diff(H,xv,2)
-    #
     H = torch.cat([H,torch.ones(len(H),1)],1)
-    # Htt = torch.cat([Htt, torch.zeros(len(H), 1)], 1)
-    # Hxx = torch.cat([Hxx, torch.zeros(len(H), 1)], 1)
 
     with torch.no_grad():
         out_pred = (H@WOUT).numpy()

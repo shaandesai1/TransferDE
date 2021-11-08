@@ -9,6 +9,20 @@ import numpy as np
 import time
 import seaborn as sns
 from matplotlib import pyplot as plt
+from utils import *
+import matplotlib
+
+matplotlib.rcParams['text.usetex'] = True
+
+sns.axes_style(style='ticks')
+sns.set_context("paper", font_scale=1.3,
+                rc={"font.size": 20, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
+                    'lines.linewidth': 3.})
+sns.set_palette('deep')
+sns.set_color_codes(palette='deep')
+
+
+
 
 parser = argparse.ArgumentParser('transfer demo')
 
@@ -28,29 +42,8 @@ parser.add_argument('--evaluate_only', action='store_false')
 
 args = parser.parse_args()
 
-# torch.set_default_tensor_type('torch.cuda.FloatTensor')
-# torch.backends.cudnn.benchmark = True
-
-
-# device =
-
-
-
 torch.set_default_tensor_type('torch.DoubleTensor')
 
-
-class SiLU(nn.Module):
-    def __init__(self):
-        '''
-        Init method.
-        '''
-        super().__init__() # init the base class
-
-    def forward(self, input):
-        '''
-        Forward pass of the function.
-        '''
-        return torch.sin(input)
 
 class ODEFunc(nn.Module):
     """
@@ -64,10 +57,7 @@ class ODEFunc(nn.Module):
         self.nl2 = SiLU()
         self.lin1 = nn.Linear(2, self.hdim)
         self.lin2 = nn.Linear(self.hdim, self.hdim)
-        # self.weight_1 = nn.Parameter(torch.zeros(1))
         self.weight_2 = nn.Parameter(torch.zeros(1))
-        # self.lin3 = nn.Linear(self.hdim, self.hdim)
-
         self.lout = nn.Linear(self.hdim, output_dim, bias=True)
 
     def hidden_states(self, t,x):
@@ -97,43 +87,7 @@ def psi(t,x,m,sig,p0,x0=0.):
 
 
 
-def diff(u, t, order=1):
-    # code adapted from neurodiffeq library
-    # https://github.com/NeuroDiffGym/neurodiffeq/blob/master/neurodiffeq/neurodiffeq.py
-    r"""The derivative of a variable with respect to another.
-    """
-    # ones = torch.ones_like(u)
 
-
-    der = torch.cat([torch.autograd.grad(u[:, i].sum(), t, create_graph=True)[0] for i in range(u.shape[1])],1)
-    if der is None:
-        print('derivative is None')
-        return torch.zeros_like(t, requires_grad=True)
-    else:
-        der.requires_grad_()
-    for i in range(1, order):
-
-        der = torch.cat([torch.autograd.grad(der[:, i].sum(), t, create_graph=True)[0] for i in range(der.shape[1])],1)
-        # print()
-        if der is None:
-            print('derivative is None')
-            return torch.zeros_like(t, requires_grad=True)
-        else:
-            der.requires_grad_()
-    return der
-
-
-class Transformer_Learned(nn.Module):
-    """
-    returns Wout learnable, only need hidden and output dims
-    """
-
-    def __init__(self, input_dims, output_dims):
-        super(Transformer_Learned, self).__init__()
-        self.lin1 = nn.Linear(args.hidden_size, output_dims)
-
-    def forward(self, x):
-        return self.lin1(x)
 
 
 class Transformer_Analytic(nn.Module):
@@ -163,120 +117,24 @@ class Transformer_Analytic(nn.Module):
         t = t[zindices,:].reshape(-1,1)
         x = x[zindices,:].reshape(-1,1)
 
-        # H = func.hidden_states(t, x)  # torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
-        # dHdt = diff(H,t)#torch.cat([diff(H,t,1),torch.zeros(len(t),1)],1)
-        # d2Hdx2 =diff(H,x,2)#torch.cat([diff(H,x,2),torch.zeros(len(t),1)],1)
-        #
-        # # H = torch.cat([H,torch.ones(len(t),1)],1)
-        #
-        # Amatrix = get_block_matrix(torch.tensor(1.))
-        #
-        # print(Amatrix)
-        #
-        # HHt = torch.block_diag(dHdt, dHdt)
-        # HHxx = torch.block_diag(d2Hdx2, d2Hdx2)
-        # HH = torch.block_diag(H,H)
-        #
-        # # print(HHt.shape,HHxx.shape,HH.shape)
-        #
-        #
-        # Amatrixhat = torch.zeros((HH.shape[0], HH.shape[0]))
-        # # print(Amatrix.shape)
-        # for i in range(Amatrix.shape[0]):
-        #     for j in range(Amatrix.shape[1]):
-        #         # print(Amatrix[i,j])
-        #         Amatrixhat[i * H.shape[0]:(i + 1) * H.shape[0], j * H.shape[0]:(j + 1) * H.shape[0]] = torch.eye(
-        #             H.shape[0], H.shape[0]) * Amatrix[i, j]
-        #
-        # # DH = hddothat + Amatrixhat @ hhat
-        # # print(Amatrix)
-        # # print(Amatrixhat)
-        # DH = (HHt-Amatrixhat@HHxx)
-        #
-        # print(grid_t[:,0],grid_x[:,0])
-        # H0 = func.hidden_states(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1))
-        # # H0 = self.append_ones(H0)
-        # HH0 = torch.block_diag(H0,H0)
-        #
-        # lbc = grid_x[0, :].reshape(-1, 1)
-        # HL = func.hidden_states(grid_t[0, :].reshape(-1, 1),lbc)
-        # HLd = diff(HL, lbc)
-        #
-        # # HL = self.append_ones(HL)
-        # HHL = torch.block_diag(HL, HL)
-        # # HLd = self.append_ones(HLd,'zeros')
-        # HHLd = torch.block_diag(HLd, HLd)
-        # # print(HLd)
-        #
-        # rbc = grid_x[-1, :].reshape(-1, 1)
-        # # print(rbc)
-        # HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), rbc)
-        # HRd = diff(HR, rbc)
-        # # print(HRd)
-        #
-        # # HR = self.append_ones(HR)
-        # HHR = torch.block_diag(HR, HR)
-        # # HRd = self.append_ones(HRd,'zeros')
-        # # print(HRd[:,-1])
-        # HHRd = torch.block_diag(HRd, HRd)
-        #
-        # full_IC_matrix = []
-        # for sigma_ in sigma:
-        #     for p0_ in p0:
-        #         print(sigma_)
-        #         IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma_, x0=0., p0=p0_)
-        #         new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
-        #
-        #         print(IC[:,0])
-        #         print(new_IC)
-        #         full_IC_matrix.append(new_IC)
-        #
-        # full_IC_matrix = torch.hstack(full_IC_matrix)
-        #
-        # print('full ic matrix')
-        # print(full_IC_matrix.shape)
-        #
-        # LVEC = DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd)
-        # #
-        # # print(torch.linalg.cond(LVEC))
-        # #
-        # W0 = torch.linalg.solve(LVEC,HH0.t()@full_IC_matrix)
-        # #
-        # # # nwout = torch.cat([W0[:args.hidden_size + 1, :].reshape(-1, ), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
-        # #
-        # return W0,dHdt,d2Hdx2
 
         H = func.hidden_states(t,x)#torch.cat([func.hidden_states(t,x),torch.ones(len(t),1)],1)
         dHdt = torch.cat([diff(H,t,1),torch.zeros(len(t),1)],1)
         d2Hdx2 =torch.cat([diff(H,x,2),torch.zeros(len(t),1)],1)
-
         H = torch.cat([H,torch.ones(len(t),1)],1)
-
         Amatrix = get_block_matrix(torch.tensor(1.))
-
-        # print(Amatrix)
 
         HHt = torch.block_diag(dHdt, dHdt)
         HHxx = torch.block_diag(d2Hdx2, d2Hdx2)
         HH = torch.block_diag(H,H)
 
-        # print(HHt.shape,HHxx.shape,HH.shape)
-
-
         Amatrixhat = torch.zeros((HH.shape[0], HH.shape[0]))
-        # print(Amatrix.shape)
         for i in range(Amatrix.shape[0]):
             for j in range(Amatrix.shape[1]):
-                # print(Amatrix[i,j])
                 Amatrixhat[i * H.shape[0]:(i + 1) * H.shape[0], j * H.shape[0]:(j + 1) * H.shape[0]] = torch.eye(
                     H.shape[0], H.shape[0]) * Amatrix[i, j]
 
-        # DH = hddothat + Amatrixhat @ hhat
-        # print(Amatrix)
-        # print(Amatrixhat)
         DH = (HHt-Amatrixhat@HHxx)
-
-        # print(grid_t[:,0],grid_x[:,0])
         H0 = func.hidden_states(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1))
         H0 = self.append_ones(H0)
         HH0 = torch.block_diag(H0,H0)
@@ -289,61 +147,30 @@ class Transformer_Analytic(nn.Module):
         HHL = torch.block_diag(HL, HL)
         HLd = self.append_ones(HLd,'zeros')
         HHLd = torch.block_diag(HLd, HLd)
-        # print(HLd)
 
         rbc = grid_x[-1, :].reshape(-1, 1)
-        # print(rbc)
         HR = func.hidden_states(grid_t[-1, :].reshape(-1, 1), rbc)
         HRd = diff(HR, rbc)
-        # print(HRd)
 
         HR = self.append_ones(HR)
         HHR = torch.block_diag(HR, HR)
         HRd = self.append_ones(HRd,'zeros')
-        # print(HRd[:,-1])
         HHRd = torch.block_diag(HRd, HRd)
 
         full_IC_matrix = []
         for sigma_ in sigma:
             for p0_ in p0:
-                # print(sigma_)
                 IC = get_ic(grid_t[:, 0].reshape(-1, 1), grid_x[:, 0].reshape(-1, 1), sigma=sigma_, x0=0., p0=p0_)
                 new_IC = torch.cat([IC[:,0].ravel(),IC[:,1].ravel()]).reshape(-1,1)
 
-                # print(IC[:,0])
-                # print(new_IC)
                 full_IC_matrix.append(new_IC)
 
         full_IC_matrix = torch.hstack(full_IC_matrix)
 
-        # print('full ic matrix')
-        # print(full_IC_matrix.shape)
-
-        # print(DH.shape,HH0.shape,HHL.shape,HHR.shape,HHLd.shape,HHRd.shape,new_IC.shape)
-        #
-        # print(DH.t()@DH,HH0.t()@HH0)
-
-
         LVEC = DH.t() @ DH + HH0.t() @ HH0 + (HHL-HHR).t()@(HHL-HHR) + (HHLd-HHRd).t()@(HHLd-HHRd)
-
-        print(torch.linalg.cond(LVEC))
-
         W0 = torch.linalg.solve(LVEC,HH0.t()@full_IC_matrix)
 
-        # nwout = torch.cat([W0[:args.hidden_size + 1, :].reshape(-1, ), W0[args.hidden_size + 1:, 0].reshape(-1, 1)], 1)
-
         return W0,dHdt,d2Hdx2
-
-
-        # sp1 = full_IC_matrix.shape[1]
-        # new_mat_A = torch.cat([DH,HH0,HHL-HHR,HHLd-HHRd],0)
-        # new_mat_Y = torch.cat([torch.zeros(len(DH),sp1),full_IC_matrix,torch.zeros(len(HHL),sp1),torch.zeros(len(HHL),sp1)],0)
-        # W0 = torch.linalg.lstsq(new_mat_A,new_mat_Y)#torch.linalg.solve(LHS, DH.t()@rho + H0.t()@BB + HT.t()@TB + HL.t()@BL + HR.t()@BR)
-        # return W0.solution, dHdt, d2Hdx2
-
-
-
-
 
 
 if args.viz:
@@ -557,16 +384,11 @@ if __name__ == '__main__':
     x_evals.requires_grad = True
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
-    # grid_x.requires_grad = True
-    # grid_t.requires_grad = True
 
 
     sigmas =torch.tensor([0.5,0.6,0.7])#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
     p0s =torch.tensor([1.,2.,3.])#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
 
-
-
-    # print(grid_t[:,0], grid_x[:,0])
     wout_gen = Transformer_Analytic()
     grid_xx = grid_x.ravel()
     grid_tt = grid_t.ravel()
@@ -576,28 +398,14 @@ if __name__ == '__main__':
     WOUT,Ht,Hxx = wout_gen.get_wout(func,grid_tt.reshape(-1,1),grid_xx.reshape(-1,1),grid_t,grid_x,sigmas,p0s)
     print(f'time:{time.time()-s1}')
 
-    ### first figure
-
-    # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
     H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(grid_xx),1)],1)
 
-    # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
     HH = torch.block_diag(H,H)
 
     teval_point = .5
 
     error_vec = []
 
-    import matplotlib
-
-    matplotlib.rcParams['text.usetex'] = True
-
-    sns.axes_style(style='ticks')
-    sns.set_context("paper", font_scale=1.3,
-                    rc={"font.size": 20, "axes.titlesize": 25, "axes.labelsize": 20, "axes.legendsize": 20,
-                        'lines.linewidth': 3.})
-    sns.set_palette('deep')
-    sns.set_color_codes(palette='deep')
 
 
     fig,ax = plt.subplots(3,3,sharex=True,sharey=True)
@@ -607,11 +415,9 @@ if __name__ == '__main__':
     axs = ax.ravel()
     with torch.no_grad():
         out_pred = HH@WOUT
-        # print(out_pred.shape)
         idx = 0
         for sigma_ in sigmas:
             for p0_ in p0s:
-                # print(sigma_)
                 gt_psi = psi(teval_point,x_evals, 1., sigma_, p0_, x0=0)
                 gt_real = np.real(gt_psi)
                 gt_img = np.imag(gt_psi)
@@ -620,38 +426,17 @@ if __name__ == '__main__':
                 pred_psi_img = (pred_psi[len(grid_xx):, 0]).reshape(len(x_evals), len(y_evals)).t()
 
 
-                # error = ((gt_real.ravel()-pred_psi_real[0,:].ravel()/norm_const)**2 + (gt_img.ravel()-pred_psi_img[0,:].ravel()/norm_const)**2).mean()
-                # error_vec.append(error)
-
-                # eval_func = func(1*torch.ones_like(x_evals).reshape(-1,1), x_evals.reshape(-1,1))
-
                 if ([sigma_,p0_] == [0.5,1.]) or([sigma_,p0_] == [0.6,2.]) or ([sigma_,p0_] == [0.7,3.]):
                     axs[idx].plot(gt_real, gt_img, label='gt', c='black', linestyle='--')
                     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='g',alpha=0.9)
 
-                # elif idx == 4:
-                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
-                # elif idx == 8:
-                #     axs[idx].plot(gt_real,gt_img,label='gt',c='black',linestyle='--')
-                #     axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred',color='green')
                 else:
-                    # print(norm_const)
                     axs[idx].plot(gt_real, gt_img, label='gt', c='black', linestyle='--')
                     axs[idx].plot(pred_psi_real[-1, :], pred_psi_img[-1, :], label='pred', color='b',alpha=0.9)
 
 
-                # axs[idx].plot(pred_psi_real[-1,:],pred_psi_img[-1,:],label='pred')
 
-                # axs[idx].plot(pred_psi_real[-1, :], pred_psi_img[-1, :], label='pred1')
-                # axs[idx].plot(pred_psi_real[:, 0], pred_psi_img[:, 0], label='pred2')
-                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred3')
-
-                # axs[idx].plot(pred_psi_real[:, -1], pred_psi_img[:, -1], label='pred1')
-                # axs[idx].set_xlabel(r'$\psi_R$')
-                # axs[idx].set_ylabel(r'$\psi_I$')
                 idx += 1
-                # plt.legend()
 
 
         ax[0,0].set_ylabel(r'$\sigma=0.5$')
@@ -709,10 +494,8 @@ if __name__ == '__main__':
                     rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 30, "axes.legendsize": 20,
                         'lines.linewidth': 3.})
 
-    sigmas = torch.linspace(0.3,1.5,50)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
-    p0s = torch.linspace(.7,5.,50)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
-    # sigmas = torch.linspace(0.2,1.5,50)#torch.tensor([0.5,0.6,0.7])#torch.linspace(0.5,0.9,100)
-    # p0s = torch.linspace(.5,5,50)#torch.tensor([1.,2.,3.])#torch.linspace(1.,4.,100)
+    sigmas = torch.linspace(0.3,1.5,50)
+    p0s = torch.linspace(.7,5.,50)
 
     x_evals = torch.linspace(xl, xr, 200)
     y_evals = torch.linspace(t0, tmax, 200)
@@ -720,21 +503,13 @@ if __name__ == '__main__':
     y_evals.requires_grad = True
     grid_x, grid_t = torch.meshgrid(x_evals, y_evals)
 
-    # s1 = time.time()
     WOUT, Ht, Hxx = wout_gen.get_wout(func, grid_t.reshape(-1, 1), grid_x.reshape(-1, 1), grid_t, grid_x, sigmas,p0s)
-    # print(f'time:{time.time()-s1}')
-    #
-    # # H = torch.cat([func.hidden_states(grid_tt.reshape(-1,1),grid_xx.reshape(-1,1)),torch.ones(len(Ht),1)],1)
     H = torch.cat([func.hidden_states(grid_t.reshape(-1, 1), grid_x.reshape(-1, 1)), torch.ones(len(grid_x.ravel()), 1)],1)
-    #
-    # # print(WOUT.shape,H.shape,Ht.shape,Hxx.shape)
     HH = torch.block_diag(H, H)
     from matplotlib import ticker, cm
     idx = 0
     with torch.no_grad():
         out_pred = HH @ WOUT
-
-        # fig, ax = plt.subplots(1,2,figsize=(10,5))
         error = np.zeros(int(len(sigmas)*len(p0s)))
         errormeans = np.zeros(int(len(sigmas) * len(p0s)))
 
@@ -749,26 +524,11 @@ if __name__ == '__main__':
                 error[idx] =torch.max((np.transpose(gtwf) - predwf)**2)
                 errormeans[idx] = torch.mean((np.transpose(gtwf) - predwf)**2)
                 idx+=1
-                # plt.colorbar(a2,ax=ax[1])
-                # plt.tight_layout()
-                # plt.savefig('residuals.pdf',dpi=2400,bbox_inches='tight')
+
     print('error')
     print(np.mean(errormeans),np.std(errormeans))
 
-    # import matplotlib.pyplot as plt
-
-    # sns.axes_style(style='ticks')
-    # sns.set_context("paper", font_scale=3,
-    #                 rc={"font.size": 30, "axes.titlesize": 25, "axes.labelsize": 30, "axes.legendsize": 20,
-    #                     'lines.linewidth': 2.5})
-    # sns.set_palette('deep')
-    # sns.set_color_codes(palette='deep')
-
-
-
     fig,ax = plt.subplots(figsize=(8,6))
-    # cs =ax[0].contourf(sigmas,p0s,np.transpose(error.reshape(len(sigmas),len(p0s))),locator=ticker.LogLocator())
-    # cbar = fig.colorbar(cs,ax=ax[0])
 
     cs = ax.contourf(sigmas, p0s, np.transpose(errormeans.reshape(len(sigmas), len(p0s))),
                         locator=ticker.LogLocator())
